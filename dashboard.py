@@ -6,24 +6,21 @@ import pandas as pd
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # Kiểm tra xem tiêu đề [gcp_service_account] có tồn tại không
     if "gcp_service_account" not in st.secrets:
-        st.error("❌ Lỗi: Không tìm thấy mục [gcp_service_account] trong Secrets!")
-        st.info("Sếp hãy kiểm tra lại xem đã có dòng [gcp_service_account] ở đầu phần Secrets chưa.")
+        st.error("❌ Không tìm thấy [gcp_service_account] trong Secrets!")
         return None
         
     try:
-        # Nạp dữ liệu từ Secrets
+        # Lấy dict từ Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Làm sạch khóa (xử lý các ký tự xuống dòng dư thừa)
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].strip()
-            
+        # Làm sạch khóa private_key khỏi các khoảng trắng thừa
+        creds_dict["private_key"] = creds_dict["private_key"].strip()
+        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"❌ Lỗi nạp bảo mật chi tiết: {str(e)}")
+        st.error(f"❌ Lỗi nạp bảo mật: {str(e)}")
         return None
 
 # --- TRIỂN KHAI GIAO DIỆN ---
