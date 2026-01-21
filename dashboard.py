@@ -5,59 +5,83 @@ import base64
 from google.oauth2.service_account import Credentials
 import pandas as pd
 
-st.set_page_config(page_title="4Oranges Secure Center", layout="wide")
-st.title("🛡️ 4Oranges SDM - AI Command Center (Secure Mode)")
+# Cấu hình giao diện
+st.set_page_config(page_title="4Oranges Secure Center", layout="wide", page_icon="🛡️")
 
-# --- HÀM KẾT NỐI BẢO MẬT ---
-def get_secure_client():
+# --- HÀM KẾT NỐI BẢO MẬT (Dùng Service Account) ---
+def get_gspread_client():
     try:
-        # Tìm key trong Secrets (Dùng lại chìa khóa cũ của sếp)
+        # Tự động tìm Key trong Secrets của sếp
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
         if not k_name:
-            st.error("Chưa cấu hình Key trong Secrets!")
             return None
         
-        # Giải mã và cấp quyền
-        decoded = base64.b64decode(st.secrets[k_name]).decode()
-        info = json.loads(decoded)
+        # Giải mã Key JSON
+        decoded_key = base64.b64decode(st.secrets[k_name]).decode('utf-8')
+        info = json.loads(decoded_key)
+        
+        # Thiết lập quyền truy cập
         creds = Credentials.from_service_account_info(
             info, 
             scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         )
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"Lỗi chìa khóa bảo mật: {e}")
+        st.error(f"Lỗi xác thực: {e}")
         return None
 
-client = get_secure_client()
+# Giao diện chính
+st.title("🛡️ 4Oranges SDM - AI Command Center")
+st.info(f"Đang kết nối qua tài khoản bảo mật: sdm-manage@phonic-impact-480807-d2...")
+
+client = get_gspread_client()
 
 if client:
     try:
-        # ID Sheet bảo mật (Lấy từ URL của sếp)
-        SHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
-        sh = client.open_by_key(SHEET_ID)
-        worksheet = sh.get_worksheet(0)
+        # Mở Sheet bằng ID (ID này là duy nhất và cố định)
+        SPREADSHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
+        sheet = client.open_by_key(SPREADSHEET_ID).sheet1
         
         # Lấy dữ liệu
-        raw_data = worksheet.get_all_values()
+        data = sheet.get_all_values()
         
-        if len(raw_data) > 0:
-            st.success("🔒 KẾT NỐI BẢO MẬT THÀNH CÔNG")
+        if len(data) > 0:
+            st.success("✅ KẾT NỐI BẢO MẬT THÔNG SUỐT!")
             
-            # Chuyển thành bảng để hiển thị chuyên nghiệp
-            # Cố định đúng 5 cột sếp đã xác nhận ở bước trước
-            headers = raw_data[0]
-            df = pd.DataFrame(raw_data[1:], columns=headers)
+            # Xử lý dữ liệu sang bảng đẹp
+            headers = data[0]
+            df = pd.DataFrame(data[1:], columns=headers)
             
-            # Hiển thị Dashboard
-            st.subheader("📑 Bảng điều khiển thiết bị")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # --- PHẦN 1: TỔNG QUAN (Metric) ---
+            if not df.empty:
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Thiết bị", df['MACHINE_ID'].iloc[0] if 'MACHINE_ID' in df else "N/A")
+                m2.metric("Trạng thái", df['STATUS'].iloc[0] if 'STATUS' in df else "N/A")
+                m3.metric("Số bản ghi", len(df))
             
-            if st.button("🔄 Refresh Data"):
+            st.divider()
+            
+            # --- PHẦN 2: BẢNG CHI TIẾT ---
+            st.subheader("📑 Nhật ký vận hành thiết bị")
+            st.dataframe(
+                df, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "STATUS": st.column_config.TextColumn("Trạng thái"),
+                    "LAST_SEEN": st.column_config.TextColumn("Thời gian cập nhật")
+                }
+            )
+            
+            # Nút cập nhật thủ công
+            if st.button("🔄 Cập nhật dữ liệu tức thì"):
                 st.rerun()
+                
         else:
-            st.warning("Sheet trống dữ liệu.")
-
+            st.warning("⚠️ Kết nối thành công nhưng Sheet chưa có dữ liệu.")
+            
     except Exception as e:
-        st.error(f"Lỗi truy cập bảo mật: {e}")
-        st.info("💡 Hãy đảm bảo sếp đã Share quyền Editor cho email Service Account trong Google Sheet.")
+        st.error(f"Lỗi truy cập dữ liệu: {str(e)}")
+        st.info("Mẹo: Đảm bảo sếp đã tắt chế độ 'Publish to Web' để đảm bảo tính riêng tư tuyệt đối.")
+else:
+    st.error("❌ Không thể khởi tạo kết nối. Sếp kiểm tra lại chuỗi Base64 trong Secrets nhé.")
