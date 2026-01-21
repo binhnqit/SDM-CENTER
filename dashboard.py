@@ -3,68 +3,68 @@ import gspread
 import json
 import base64
 from google.oauth2.service_account import Credentials
+import pandas as pd
 
-st.set_page_config(page_title="Hệ thống Truy vết Lỗi", layout="wide")
-st.title("🛡️ 4Oranges SDM - Hệ thống Truy vết Lỗi")
+# 1. Cấu hình trang
+st.set_page_config(page_title="4Oranges Secure Dashboard", layout="wide")
+st.title("🛡️ 4Oranges SDM - AI Command Center")
 
-def trace_error():
-    # --- BƯỚC 1: KIỂM TRA SECRETS ---
-    st.write("### 🔍 Bước 1: Kiểm tra chìa khóa (Secrets)")
-    k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
-    
-    if not k_name:
-        st.error("❌ KHÔNG TÌM THẤY KEY: Sếp chưa dán mã JSON vào mục Secrets.")
-        return
-    st.success(f"✅ Tìm thấy biến lưu trữ: `{k_name}`")
-
-    # --- BƯỚC 2: GIẢI MÃ JSON ---
-    st.write("### 🔍 Bước 2: Giải mã & Kiểm tra định dạng JSON")
+# 2. Kết nối bảo mật
+def get_gspread_client():
     try:
-        raw_key = st.secrets[k_name]
-        decoded = base64.b64decode(raw_key).decode('utf-8')
-        info = json.loads(decoded)
-        service_email = info.get("client_email")
-        st.success(f"✅ Giải mã thành công JSON.")
-        st.info(f"📧 Email Service Account của sếp là: `{service_email}`")
-        st.warning("👉 Sếp hãy copy email trên và kiểm tra xem đã Share quyền 'Editor' trong Google Sheet chưa.")
-    except Exception as e:
-        st.error(f"❌ LỖI ĐỊNH DẠNG: Chìa khóa bị hỏng hoặc dán thiếu. Chi tiết: {e}")
-        return
-
-    # --- BƯỚC 3: KẾT NỐI API ---
-    st.write("### 🔍 Bước 3: Kết nối đến máy chủ Google API")
-    try:
+        # Lấy Key từ Secrets
+        k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+        decoded_key = base64.b64decode(st.secrets[k_name]).decode('utf-8')
+        info = json.loads(decoded_key)
+        
+        # Cấp quyền
         creds = Credentials.from_service_account_info(
             info, 
             scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         )
-        client = gspread.authorize(creds)
-        st.success("✅ Kết nối API thành công.")
+        return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"❌ LỖI KẾT NỐI API: Có thể do mạng hoặc Google Cloud chặn. Chi tiết: {e}")
-        return
+        st.error(f"Lỗi cấu hình Key: {e}")
+        return None
 
-    # --- BƯỚC 4: TRUY CẬP FILE SHEET ---
-    st.write("### 🔍 Bước 4: Mở File Sheet & Đọc dữ liệu")
-    SHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
+client = get_gspread_client()
+
+if client:
     try:
+        # Mở Sheet bằng ID cố định
+        SHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.get_worksheet(0)
-        data = worksheet.row_values(1)
-        st.success("✅ ĐÃ MỞ ĐƯỢC SHEET VÀ ĐỌC ĐƯỢC DÒNG TIÊU ĐỀ!")
-        st.code(data)
-    except gspread.exceptions.PermissionError:
-        st.error("❌ LỖI QUYỀN TRUY CẬP: Email trên chưa được Share quyền vào Sheet này.")
-    except gspread.exceptions.APIError as e:
-        if "API has not been used" in str(e):
-            st.error("❌ LỖI API: Sếp chưa nhấn 'ENABLE' Google Sheets API trong Google Cloud Console.")
+        
+        # Đọc dữ liệu
+        all_data = worksheet.get_all_values()
+        
+        if all_data:
+            st.success("✅ HỆ THỐNG ĐÃ THÔNG SUỐT & BẢO MẬT")
+            
+            # Chuyển dữ liệu sang DataFrame (Bỏ qua dòng tiêu đề để lấy nội dung)
+            df = pd.DataFrame(all_data[1:], columns=all_data[0])
+            
+            # Hiển thị Chỉ số nhanh
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("MÁY PHA", df.iloc[0, 0] if not df.empty else "N/A")
+            with c2: st.metric("TRẠNG THÁI", df.iloc[0, 1] if not df.empty else "N/A")
+            with c3: st.metric("DÒNG DỮ LIỆU", len(df))
+            
+            st.divider()
+            
+            # Bảng dữ liệu chính
+            st.subheader("📑 Dữ liệu vận hành chi tiết")
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            if st.button("🔄 Cập nhật"):
+                st.rerun()
         else:
-            st.error(f"❌ Lỗi API khác: {e}")
-    except Exception as e:
-        st.error(f"❌ Lỗi không xác định khi mở Sheet: {type(e).__name__} - {e}")
+            st.warning("Sheet đang trống.")
 
-# Chạy truy vết
-if st.button("🚀 BẮT ĐẦU TRUY VẾT"):
-    trace_error()
+    except Exception as e:
+        st.error("❌ CHƯA CÓ QUYỀN TRUY CẬP")
+        st.write(f"Chi tiết kỹ thuật: {e}")
+        st.info(f"👉 Sếp hãy kiểm tra lại: Email `sdm-manage@phonic-impact-480807-d2.iam.gserviceaccount.com` đã được nhấn nút 'Share' và chọn quyền 'Editor' trên file Google Sheet chưa?")
 else:
-    st.info("Nhấn nút trên để hệ thống bắt đầu kiểm tra từng bước.")
+    st.error("Không tìm thấy Key JSON.")
