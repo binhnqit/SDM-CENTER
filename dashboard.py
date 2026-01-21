@@ -4,53 +4,55 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 
-# 1. Kết nối thẳng vào Google Sheet
+# 1. Kết nối trực tiếp (Quét sạch các lỗi bảo mật/đường truyền)
 def get_client():
     try:
-        # Tự động quét tìm Key trong Secrets của sếp
+        # Tìm Key trong Secrets của sếp (Tự động nhận diện mọi tên biến)
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
-        info = json.loads(base64.b64decode(st.secrets[k_name]).decode())
+        decoded = base64.b64decode(st.secrets[k_name]).decode()
+        info = json.loads(decoded)
         creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
         return gspread.authorize(creds)
     except: return None
 
-st.set_page_config(page_title="4Oranges SDM", layout="wide")
+st.set_page_config(page_title="4Oranges SDM Center", layout="wide")
 st.title("🛡️ 4Oranges SDM - AI Command Center")
 
 client = get_client()
 
 if client:
     try:
-        # Mở Sheet bằng URL
+        # Mở Sheet bằng URL thực tế của sếp
         url = "https://docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/edit"
         sh = client.open_by_url(url).sheet1
         
-        # Lấy toàn bộ dữ liệu thô (Mảng 2 chiều)
-        raw_data = sh.get_all_values()
+        # LẤY DỮ LIỆU THÔ (Dạng mảng 2 chiều cơ bản nhất)
+        all_data = sh.get_all_values()
         
-        if raw_data:
-            st.success("✅ ĐÃ KẾT NỐI - DỮ LIỆU THỰC TẾ TRÊN SHEET:")
+        if all_data:
+            st.success("✅ HỆ THỐNG ĐÃ THÔNG SUỐT!")
             
-            # 2. Hiển thị Dashboard đơn giản
-            # Lấy dòng 2 (Dòng dữ liệu đầu tiên) để hiện thông số nhanh
-            if len(raw_data) > 1:
-                top = raw_data[1]
-                c1, c2 = st.columns(2)
-                c1.metric("MÁY PHA", top[0] if top[0] else "---")
-                c2.metric("TRẠNG THÁI", top[1] if top[1] else "---")
+            # --- HIỂN THỊ CÁC Ô CHỈ SỐ NHANH ---
+            if len(all_data) > 1:
+                # Lấy dòng đầu tiên có dữ liệu (Dòng 2 trên Sheet)
+                row2 = all_data[1]
+                c1, c2, c3 = st.columns(3)
+                c1.metric("THIẾT BỊ", row2[0] if row2[0] else "---")
+                c2.metric("TRẠNG THÁI", row2[1] if row2[1] else "---")
+                c3.metric("CẬP NHẬT", row2[3] if row2[3] else "---")
             
             st.divider()
             
-            # 3. HIỂN THỊ BẢNG DỮ LIỆU (Dùng hàm cơ bản nhất của Streamlit)
-            # Hàm này sẽ hiện đúng những gì sếp thấy trên Google Sheet
-            st.write("### 📑 Chi tiết bảng dữ liệu (5x5)")
-            st.table(raw_data) 
+            # --- HIỂN THỊ BẢNG DỮ LIỆU (Bản sao 1:1 từ Sheet) ---
+            st.write("### 📑 Chi tiết dữ liệu vận hành")
+            # Dùng st.table để đảm bảo mọi ô (kể cả ô trống) đều hiện lên rõ ràng
+            st.table(all_data)
             
-            if st.button("🔄 Bấm để làm mới dữ liệu"):
+            if st.button("🔄 Làm mới dữ liệu"):
                 st.rerun()
         else:
-            st.warning("Sheet không có dữ liệu.")
+            st.warning("⚠️ Chưa có dữ liệu trong Sheet.")
     except Exception as e:
-        st.error(f"Lỗi đọc Sheet: {str(e)}")
+        st.error(f"⚠️ Lỗi đọc dữ liệu: {e}")
 else:
-    st.error("❌ Lỗi kết nối Google Cloud. Sếp kiểm tra lại Secrets nhé.")
+    st.error("❌ Không tìm thấy Key trong Secrets. Sếp hãy kiểm tra lại nhé.")
