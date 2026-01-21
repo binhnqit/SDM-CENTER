@@ -5,12 +5,14 @@ import base64
 import pandas as pd
 from google.oauth2.service_account import Credentials
 
+# 1. Kết nối (Giữ nguyên phần đã thông suốt)
 def get_gsheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
-        # Tự động tìm biến key trong Secrets
-        k = next(v for k, v in st.secrets.items() if "GCP_KEY" in k or "gcp_base64" in k)
-        decoded_data = base64.b64decode(k).decode('utf-8')
+        # Tự động quét biến Key trong Secrets
+        k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+        if not k_name: return None
+        decoded_data = base64.b64decode(st.secrets[k_name]).decode('utf-8')
         info = json.loads(decoded_data)
         creds = Credentials.from_service_account_info(info, scopes=scopes)
         return gspread.authorize(creds)
@@ -23,40 +25,59 @@ client = get_gsheet_client()
 
 if client:
     try:
-        # Mở Sheet bằng URL chuẩn
         SHEET_URL = "https://docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/edit"
         sheet = client.open_by_url(SHEET_URL).sheet1
         
-        # 1. Lấy dữ liệu dạng mảng thô (Chống lỗi tiêu đề trống)
+        # Lấy dữ liệu thô hoàn toàn
         raw_rows = sheet.get_all_values()
         
-        if len(raw_rows) > 0:
-            # 2. Ép tên cột theo đúng thứ tự sếp muốn (A, B, C, D, E)
-            standard_headers = ["MACHINE_ID", "STATUS", "COMMAND", "LAST_SEEN", "HISTORY"]
+        if raw_rows:
+            # Thuật toán gán cột linh hoạt:
+            # Chúng ta ưu tiên 5 cột chính theo ảnh sếp gửi
+            std_cols = ["MACHINE_ID", "STATUS", "COMMAND", "LAST_SEEN", "HISTORY"]
             
-            # Nếu Sheet có ít hơn hoặc nhiều hơn 5 cột, chúng ta vẫn xử lý được
-            data_rows = raw_rows[1:] # Lấy từ dòng 2 trở đi
-            df = pd.DataFrame(data_rows)
+            # Tạo bảng từ dữ liệu dòng 2 trở đi
+            df = pd.DataFrame(raw_rows[1:])
             
-            # Gán lại tên cột cho chuẩn
-            df.columns = standard_headers[:len(df.columns)]
+            # Cắt hoặc bù thêm cột cho khớp với dữ liệu thực tế trong Sheet
+            actual_col_count = df.shape[1]
+            display_cols = std_cols[:actual_col_count]
             
-            # 3. Làm sạch dữ liệu (Xóa dòng hoàn toàn trống)
+            # Nếu Sheet nhiều cột hơn chuẩn, đặt tên tự động cho cột dư
+            if actual_col_count > len(std_cols):
+                for i in range(len(std_cols), actual_col_count):
+                    display_cols.append(f"EXTRA_{i+1}")
+            
+            df.columns = display_cols
+
+            # Làm sạch: Loại bỏ dòng trắng hoàn toàn
             df = df.replace('', pd.NA).dropna(how='all')
 
-            # --- HIỂN THỊ ---
-            st.success("✅ ĐÃ KẾT NỐI VÀ ĐỒNG BỘ CỘT THÀNH CÔNG!")
+            # --- GIAO DIỆN CHUYÊN NGHIỆP ---
+            st.success("✅ HỆ THỐNG ĐÃ SẴN SÀNG VẬN HÀNH!")
             
-            # Dashboard mini
-            col1, col2 = st.columns(2)
-            col1.metric("Máy đang quản lý", df['MACHINE_ID'].iloc[0] if not df.empty else "N/A")
-            col2.metric("Trạng thái hiện tại", df['STATUS'].iloc[0] if not df.empty else "N/A")
+            # Hiển thị thông tin máy pha chính (Dòng 2 trong Sheet)
+            if not df.empty:
+                m_id = df['MACHINE_ID'].iloc[0] if pd.notna(df['MACHINE_ID'].iloc[0]) else "N/A"
+                status = df['STATUS'].iloc[0] if pd.notna(df['STATUS'].iloc[0]) else "N/A"
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Thiết bị", m_id)
+                c2.metric("Trạng thái", status)
+                c3.metric("Kết nối", "Ổn định" if "Online" in status else "Kiểm tra lại")
 
             st.divider()
-            st.subheader("📑 Nhật ký vận hành hệ thống")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.subheader("📑 Nhật ký dữ liệu máy pha")
             
+            # Hiển thị bảng dữ liệu sạch đẹp
+            st.dataframe(df.fillna(""), use_container_width=True, hide_index=True)
+            
+            if st.button("🔄 Cập nhật dữ liệu mới"):
+                st.rerun()
         else:
-            st.warning("⚠️ Sheet đang trống.")
+            st.warning("⚠️ Không tìm thấy dữ liệu trong Sheet.")
+            
     except Exception as e:
-        st.error(f"⚠️ Lỗi cấu trúc: {str(e)}")
+        st.error(f"⚠️ Lỗi xử lý: {str(e)}")
+else:
+    st.error("❌ Không thể kết nối Google Cloud. Vui lòng kiểm tra lại Secrets.")
