@@ -7,36 +7,47 @@ import pandas as pd
 
 st.title("🛡️ 4Oranges SDM - AI Command Center")
 
-# --- HÀM KẾT NỐI TỐI GIẢN ---
-def connect():
+# Xóa cache để tránh lỗi 403 cũ
+st.cache_data.clear()
+
+def get_data():
     try:
-        # Lấy Key từ Secrets
+        # 1. Giải mã Key
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
         info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
         
-        # Thiết lập quyền
+        # 2. Kết nối
         creds = Credentials.from_service_account_info(
             info, scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Lỗi Key: {e}")
-        return None
-
-client = connect()
-
-if client:
-    try:
-        # Mở Sheet bằng ID
+        client = gspread.authorize(creds)
+        
+        # 3. Mở file (Dùng ID chính xác của sếp)
         sh = client.open_by_key("1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH")
-        df = pd.DataFrame(sh.sheet1.get_all_records())
         
-        st.success("✅ ĐÃ THÔNG SUỐT DỮ LIỆU!")
-        
-        # In tên cột và Bảng
-        st.write("### 📋 Các cột hiện có:", ", ".join(df.columns))
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        
+        # Lấy dữ liệu từ Sheet đầu tiên
+        worksheet = sh.get_worksheet(0)
+        data = worksheet.get_all_values()
+        return data, None
     except Exception as e:
-        st.error("❌ VẪN BỊ CHẶN QUYỀN TRUY CẬP (Lỗi 403)")
-        st.info("Sếp hãy kiểm tra lại Bước 1 (Share Editor) và Bước 2 (Enable API) ở trên nhé.")
+        return None, str(e)
+
+# Thực thi lấy dữ liệu
+data, error = get_data()
+
+if data:
+    st.success("🎉 CHÚC MỪNG SẾP! KẾT NỐI ĐÃ THÔNG SUỐT.")
+    
+    # Hiển thị bảng
+    headers = data[0]
+    df = pd.DataFrame(data[1:], columns=headers)
+    
+    st.write("### 📋 Danh sách thiết bị vận hành")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    # In tên các cột để xác nhận (Bước 2 sếp giao)
+    st.info(f"Các cột tìm thấy: {', '.join(headers)}")
+    
+else:
+    st.error(f"Lỗi: {error}")
+    st.warning("Sếp hãy Reboot App trong mục 'Manage app' để xóa bộ nhớ đệm quyền truy cập nhé.")
