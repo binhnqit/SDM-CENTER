@@ -6,28 +6,24 @@ import pandas as pd
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
+    # Kiểm tra xem tiêu đề [gcp_service_account] có tồn tại không
     if "gcp_service_account" not in st.secrets:
-        st.error("❌ Chưa cấu hình Secrets!")
+        st.error("❌ Lỗi: Không tìm thấy mục [gcp_service_account] trong Secrets!")
+        st.info("Sếp hãy kiểm tra lại xem đã có dòng [gcp_service_account] ở đầu phần Secrets chưa.")
         return None
         
     try:
-        # 1. Lấy dữ liệu thô từ Secrets
+        # Nạp dữ liệu từ Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # 2. FIX LỖI PADDING: Quan trọng nhất
-        # Chúng ta thay thế chuỗi '\\n' thành '\n' thực sự và đảm bảo không có khoảng trắng thừa
-        raw_key = creds_dict["private_key"]
-        fixed_key = raw_key.replace("\\n", "\n").strip()
-        creds_dict["private_key"] = fixed_key
-        
-        # 3. Khởi tạo kết nối
+        # Làm sạch khóa (xử lý các ký tự xuống dòng dư thừa)
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].strip()
+            
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
     except Exception as e:
         st.error(f"❌ Lỗi nạp bảo mật chi tiết: {str(e)}")
-        # In ra độ dài khóa để kiểm tra (không in ra khóa thật để bảo mật)
-        if "private_key" in creds_dict:
-            st.info(f"Độ dài khóa hiện tại: {len(creds_dict['private_key'])} ký tự.")
         return None
 
 # --- TRIỂN KHAI GIAO DIỆN ---
