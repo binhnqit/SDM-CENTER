@@ -2,6 +2,7 @@ import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
+import re
 
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -11,33 +12,28 @@ def get_gsheet_client():
         return None
         
     try:
-        # 1. Lấy dữ liệu từ Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
-        
-        # 2. XỬ LÝ CHUỖI PRIVATE_KEY (Cực kỳ quan trọng)
         raw_key = creds_dict["private_key"]
+
+        # --- THUẬT TOÁN DỌN RÁC BASE64 CHUYÊN GIA ---
+        # 1. Tách phần đầu và cuối của khóa RSA
+        header = "-----BEGIN PRIVATE KEY-----"
+        footer = "-----END PRIVATE KEY-----"
         
-        # Loại bỏ các ký tự xuống dòng bị lặp lại hoặc khoảng trắng lạ
-        # Bước này giải quyết lỗi "Invalid base64-encoded string"
-        lines = raw_key.split('\n')
-        clean_lines = []
-        for line in lines:
-            line = line.strip()
-            if line:
-                clean_lines.append(line)
+        # Lấy phần nội dung nằm giữa
+        content = raw_key.replace(header, "").replace(footer, "")
         
-        # Ghép lại với ký tự xuống dòng chuẩn \n
-        fixed_key = "\n".join(clean_lines)
+        # 2. Loại bỏ TOÀN BỘ ký tự xuống dòng, khoảng trắng, tab... 
+        # Chỉ giữ lại các ký tự Base64 hợp lệ (A-Z, a-z, 0-9, +, /, =)
+        clean_content = re.sub(r'[^A-Za-z0-9+/=]', '', content)
         
-        # Đảm bảo có đúng cấu trúc đầu cuối
-        if "-----BEGIN PRIVATE KEY-----" not in fixed_key:
-            fixed_key = "-----BEGIN PRIVATE KEY-----\n" + fixed_key
-        if "-----END PRIVATE KEY-----" not in fixed_key:
-            fixed_key = fixed_key + "\n-----END PRIVATE KEY-----"
-            
+        # 3. Ghép lại định dạng chuẩn: Header + Content (đã sạch) + Footer
+        # Google yêu cầu phần nội dung phải sạch sẽ hoàn toàn
+        fixed_key = f"{header}\n{clean_content}\n{footer}"
+        
         creds_dict["private_key"] = fixed_key
         
-        # 3. Nạp vào thư viện Google
+        # 4. Nạp vào thư viện
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
         
@@ -48,8 +44,9 @@ def get_gsheet_client():
 # --- TRIỂN KHAI TIẾP THEO ---
 client = get_gsheet_client()
 if client:
-    st.success("✅ Tuyệt vời sếp ơi! Hệ thống đã thông qua lớp bảo mật.")
-    # Tiếp tục logic đọc Sheet ở đây...
+    st.success("✅ Dashboard 4Oranges: Kết nối bảo mật thành công!")
+    # Tiếp tục code đọc sheet của sếp...
+
 
 # --- TRIỂN KHAI GIAO DIỆN ---
 client = get_gsheet_client()
