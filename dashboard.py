@@ -1,73 +1,114 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
+import plotly.graph_objects as go
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime, timedelta
 
-# 1. Cấu hình giao diện
-st.set_page_config(page_title="4Oranges Command Center", layout="wide", page_icon="🎨")
+# --- 1. CẤU HÌNH TRANG ---
+st.set_page_config(page_title="4Oranges SDM - AI Command Center", layout="wide", page_icon="🎨")
 
-# 2. Đọc dữ liệu từ Link CSV của sếp
-CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/pub?gid=0&single=true&output=csv"
+# --- 2. KẾT NỐI DỮ LIỆU (GOOGLE SHEETS API) ---
+# Sếp cần file credentials.json để dùng tính năng GHI (Lock/Unlock)
+@st.cache_resource
+def get_sheet_connection():
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        # Lưu ý: Thay 'credentials.json' bằng file của sếp hoặc dùng Streamlit Secrets
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        client = gspread.authorize(creds)
+        # Thay link sheet của sếp vào đây
+        sheet_url = "https://docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/edit"
+        return client.open_by_url(sheet_url).sheet1
+    except Exception as e:
+        st.error(f"Lỗi kết nối API: {e}")
+        return None
 
+sheet = get_sheet_connection()
+
+# --- 3. HÀM ĐỌC DỮ LIỆU ---
 def load_data():
-    df = pd.read_csv(CSV_URL)
-    # Đảm bảo các cột đúng định dạng
-    df.columns = ['MACHINE_ID', 'STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']
-    return df
+    if sheet:
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+        # Chuyển đổi cột thời gian
+        df['LAST_SEEN'] = pd.to_datetime(df['LAST_SEEN'], errors='coerce')
+        return df
+    return pd.DataFrame()
 
-# 3. Giao diện chính
-st.title("🚀 4Oranges SDM - Hệ Thống Giám Sát 3.000 Máy Pha")
+# --- 4. GIAO DIỆN CHÍNH ---
+st.title("🎨 4Oranges SDM - Trung Tâm Điều Hành AI")
+st.markdown("---")
 
-try:
-    df = load_data()
+df = load_data()
 
-    # --- HÀNG THỐNG KÊ TỔNG QUAN ---
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Tổng số máy", len(df))
-    with col2:
-        online_count = len(df[df['STATUS'] == 'Online'])
-        st.metric("Máy đang Online", online_count, delta=f"{online_count/len(df)*100:.1f}%")
-    with col3:
-        # Giả sử "Cảnh báo" là những máy có Read Error hoặc không thấy dữ liệu
-        warning_count = len(df[df['HISTORY'].str.contains('Error', na=False)])
-        st.metric("Cảnh báo lỗi", warning_count, delta_color="inverse")
-    with col4:
-        st.write("**Thời gian hệ thống:**")
-        st.write(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
-
-    st.divider()
-
-    # --- PHÂN TÍCH DỮ LIỆU PHA MÀU ---
-    st.subheader("📊 Phân tích hoạt động pha màu")
-    c1, c2 = st.columns([2, 1])
+if not df.empty:
+    # --- PHẦN AI: PHÂN TÍCH VÀ CẢNH BÁO ---
+    now = datetime.now()
+    df['Status_AI'] = df['LAST_SEEN'].apply(lambda x: 'Online' if (now - x).total_seconds() < 300 else 'Offline')
     
-    with c1:
-        # Biểu đồ Top màu được pha nhiều nhất
-        if 'HISTORY' in df.columns:
-            color_counts = df['HISTORY'].value_counts().reset_index()
-            color_counts.columns = ['Màu sắc', 'Số lần pha']
-            fig = px.bar(color_counts.head(10), x='Màu sắc', y='Số lần pha', 
-                         title="Top 10 màu pha nhiều nhất toàn hệ thống",
-                         color='Số lần pha', color_continuous_scale='Viridis')
+    # --- HÀNG CHỈ SỐ (METRICS) ---
+    m1, m2, m3, m4 = st.columns(4)
+    total_machines = len(df)
+    online_now = len(df[df['Status_AI'] == 'Online'])
+    locked_machines = len(df[df['COMMAND'] == 'LOCK'])
+    
+    m1.metric("Tổng Máy Pha", total_machines)
+    m2.metric("Đang Hoạt Động", online_now, f"{online_now/total_machines*100:.1f}%")
+    m3.metric("Máy Đang Khóa", locked_machines, delta_color="inverse")
+    m4.metric("Cảnh Báo AI", len(df[df['HISTORY'].str.contains("Error", na=False)]), delta_color="off")
+
+    # --- TAB CHỨC NĂNG ---
+    tab1, tab2, tab3 = st.tabs(["📊 Giám Sát Real-time", "🤖 Phân Tích AI", "🕹️ Điều Khiển"])
+
+    with tab1:
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            st.subheader("Xu Hướng Pha Màu Hệ Thống")
+            color_df = df['HISTORY'].value_counts().reset_index()
+            color_df.columns = ['Màu', 'Số lần']
+            fig = px.bar(color_df.head(15), x='Màu', y='Số lần', color='Số lần', color_continuous_scale='Reds')
             st.plotly_chart(fig, use_container_width=True)
+        
+        with col_b:
+            st.subheader("Tỷ Lệ Kết Nối")
+            pie_fig = px.pie(df, names='Status_AI', hole=0.5, color_discrete_sequence=['#2ecc71', '#e74c3c'])
+            st.plotly_chart(pie_fig, use_container_width=True)
 
-    with c2:
-        # Biểu đồ tròn trạng thái
-        status_fig = px.pie(df, names='STATUS', title="Tỷ lệ kết nối", hole=0.4)
-        st.plotly_chart(status_fig, use_container_width=True)
+    with tab2:
+        st.subheader("🤖 AI Insights: Phát Hiện Bất Thường")
+        # Logic AI đơn giản: Cảnh báo nếu máy Offline quá 24h hoặc pha màu lạ
+        dead_machines = df[df['Status_AI'] == 'Offline']
+        if not dead_machines.empty:
+            st.warning(f"Phát hiện {len(dead_machines)} máy mất tín hiệu trên 5 phút. Cần kiểm tra kết nối mạng tại đại lý.")
+            st.dataframe(dead_machines[['MACHINE_ID', 'LAST_SEEN', 'HISTORY']], use_container_width=True)
+        else:
+            st.success("Tất cả hệ thống đang vận hành tối ưu.")
 
-    # --- BẢNG CHI TIẾT & TÌM KIẾM ---
-    st.subheader("📑 Danh sách chi tiết đại lý")
-    search = st.text_input("🔍 Tìm nhanh mã máy hoặc tên màu...", "")
-    
-    if search:
-        df_display = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
-    else:
-        df_display = df
+    with tab3:
+        st.subheader("🕹️ Điều Khiển Từ Xa")
+        st.info("Chọn máy để thực hiện lệnh LOCK (Khóa màn hình) hoặc UNLOCK.")
+        
+        with st.form("control_form"):
+            selected_id = st.selectbox("Chọn ID Máy Đại Lý", df['MACHINE_ID'].tolist())
+            action = st.radio("Hành động", ["UNLOCK (NONE)", "LOCK (Khóa máy)"], horizontal=True)
+            submit = st.form_submit_button("XÁC NHẬN GỬI LỆNH")
+            
+            if submit:
+                try:
+                    # Tìm dòng của máy đó trên Sheet
+                    cell = sheet.find(str(selected_id))
+                    cmd_value = "LOCK" if "LOCK" in action else "NONE"
+                    sheet.update_cell(cell.row, 3, cmd_value) # Cột 3 là COMMAND
+                    st.success(f"✅ Đã gửi lệnh {cmd_value} tới máy {selected_id}")
+                    st.cache_data.clear() # Xóa cache để cập nhật lại dữ liệu
+                except Exception as e:
+                    st.error(f"Không tìm thấy ID máy trên Sheet: {e}")
 
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    # --- BẢNG DỮ LIỆU CHI TIẾT ---
+    st.markdown("### 📑 Danh sách chi tiết toàn hệ thống")
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
-except Exception as e:
-    st.warning("Đang kết nối tới máy chủ dữ liệu Google...")
-    st.info("Lưu ý: Sếp cần đảm bảo Sheet đã được 'Xuất bản lên web' ở định dạng CSV.")
+else:
+    st.warning("⚠️ Đang chờ dữ liệu từ hệ thống 4Oranges...")
