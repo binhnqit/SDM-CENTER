@@ -5,11 +5,11 @@ import base64
 import pandas as pd
 from google.oauth2.service_account import Credentials
 
-# 1. Kết nối bảo mật (Tự động quét Key)
+# 1. Kết nối bảo mật (Tự động quét mọi loại Key sếp đã đặt)
 def get_gsheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
-        # Tìm bất kỳ biến nào chứa mã Key trong Secrets
+        # Tự động tìm key trong Secrets của sếp
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
         if not k_name: return None
         decoded_data = base64.b64decode(st.secrets[k_name]).decode('utf-8')
@@ -25,47 +25,49 @@ client = get_gsheet_client()
 
 if client:
     try:
-        # URL Sheet từ file của sếp
+        # ID Sheet từ ảnh của sếp
         SHEET_URL = "https://docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/edit"
         sheet = client.open_by_url(SHEET_URL).sheet1
         
-        # Lấy dữ liệu thô (để chống lỗi cấu trúc dòng trống)
-        raw_rows = sheet.get_all_values()
+        # LẤY DỮ LIỆU THÔ HOÀN TOÀN (Lấy mảng 2 chiều để tránh lỗi cấu trúc)
+        values = sheet.get_all_values()
         
-        if len(raw_rows) > 0:
-            # Ép tên cột theo đúng thực tế sếp đang có trên màn hình
+        if values:
+            # Tự định nghĩa lại tiêu đề để đảm bảo khớp 100% với ảnh sếp gửi
             headers = ["MACHINE_ID", "STATUS", "COMMAND", "LAST_SEEN", "HISTORY"]
             
-            # Chỉ lấy tối đa 5 cột đầu tiên để tránh lỗi nếu sếp gõ thừa vào cột F, G
-            data_clean = [row[:5] for row in raw_rows[1:]]
+            # Xử lý từng dòng dữ liệu: Chỉ lấy đúng 5 cột đầu tiên
+            data_rows = []
+            for row in values[1:]:
+                # Nếu dòng ngắn hơn 5 cột, bù thêm ô trống để không bị lỗi
+                clean_row = (row + [""] * 5)[:5]
+                data_rows.append(clean_row)
             
-            # Tạo bảng dữ liệu
-            df = pd.DataFrame(data_clean, columns=headers)
+            df = pd.DataFrame(data_rows, columns=headers)
             
-            # Loại bỏ các dòng hoàn toàn không có chữ nào (dòng trắng)
-            df = df.replace('', pd.NA).dropna(how='all')
-
-            # --- HIỂN THỊ KẾT QUẢ ---
-            st.success("✅ ĐÃ KẾT NỐI VÀ ĐỒNG BỘ DỮ LIỆU THÀNH CÔNG!")
+            # Hiển thị Dashboard
+            st.success("✅ ĐÃ THÔNG SUỐT HỆ THỐNG!")
             
-            # Lấy thông tin máy đầu tiên để hiện Metric cho oai
-            if not df.empty:
-                m1, m2 = st.columns(2)
-                m1.metric("Thiết bị chính", df['MACHINE_ID'].iloc[0])
-                m2.metric("Trạng thái", df['STATUS'].iloc[0] or "N/A")
+            # Hiển thị thông số máy pha chính (Dòng đầu tiên có ID)
+            main_row = df[df['MACHINE_ID'] != ""].iloc[0] if not df[df['MACHINE_ID'] != ""].empty else None
+            if main_row is not None:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Thiết bị", main_row['MACHINE_ID'])
+                c2.metric("Trạng thái", main_row['STATUS'])
+                c3.metric("Lệnh mới nhất", main_row['COMMAND'] or "NONE")
 
             st.divider()
-            st.subheader("📑 Danh sách chi tiết & Nhật ký lệnh")
+            st.subheader("📑 Nhật ký vận hành & Lịch sử lệnh")
             
-            # Hiển thị bảng đẹp, thay thế giá trị rỗng bằng dấu gạch ngang
-            st.dataframe(df.fillna("-"), use_container_width=True, hide_index=True)
+            # Hiển thị bảng dữ liệu (Dùng fillna để bảng sạch đẹp)
+            st.dataframe(df, use_container_width=True, hide_index=True)
             
-            if st.button("🔄 Làm mới dữ liệu từ Google Sheet"):
+            if st.button("🔄 Cập nhật dữ liệu ngay"):
                 st.rerun()
         else:
-            st.warning("⚠️ Google Sheet đang trống, sếp hãy nhập dữ liệu vào.")
+            st.warning("⚠️ Bảng tính hiện đang trống.")
             
     except Exception as e:
-        st.error(f"⚠️ Lỗi xử lý: {str(e)}")
+        st.error(f"⚠️ Lỗi hệ thống: {str(e)}")
 else:
-    st.error("❌ Không thể kết nối. Sếp hãy kiểm tra lại mục Secrets trên Streamlit.")
+    st.error("❌ Không thể kết nối. Sếp hãy kiểm tra lại Key trong Secrets.")
