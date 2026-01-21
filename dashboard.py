@@ -12,21 +12,27 @@ st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # 1. Kiểm tra xem biến raw_json có tồn tại trong Secrets không
     if "raw_json" not in st.secrets:
-        st.error("❌ Thiếu 'raw_json' trong Secrets!")
+        st.error("❌ Không tìm thấy 'raw_json' trong Secrets!")
         return None
         
     try:
-        # 2. Chuyển đổi chuỗi văn bản (str) thành một Dictionary của Python
-        creds_info = json.loads(st.secrets["raw_json"])
+        # Lấy chuỗi và dọn dẹp khoảng trắng đầu/cuối
+        json_string = st.secrets["raw_json"].strip()
         
-        # 3. Nạp từ Dictionary (Sửa lỗi 'seekable bit stream' tại đây)
+        # Kiểm tra xem có dấu đóng ngoặc không
+        if not json_string.endswith("}"):
+            st.warning("⚠️ Cảnh báo: Chuỗi JSON trong Secrets dường như bị thiếu ký tự đóng ngoặc '}' ở cuối.")
+        
+        creds_info = json.loads(json_string)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
-        
         return gspread.authorize(creds)
+    except json.JSONDecodeError as je:
+        st.error(f"❌ Lỗi định dạng JSON: {str(je)}")
+        st.info("Sếp hãy kiểm tra xem có dán thiếu phần cuối của file JSON không.")
+        return None
     except Exception as e:
-        st.error(f"❌ Lỗi nạp bảo mật: {str(e)}")
+        st.error(f"❌ Lỗi hệ thống: {str(e)}")
         return None
 
 # --- 2. GIAO DIỆN ĐIỀU HÀNH ---
