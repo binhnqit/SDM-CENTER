@@ -4,55 +4,67 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 
-# 1. Kết nối trực tiếp (Quét sạch các lỗi bảo mật/đường truyền)
+# 1. Kết nối trực tiếp (Quét sạch mọi loại Key trong Secrets)
 def get_client():
     try:
-        # Tìm Key trong Secrets của sếp (Tự động nhận diện mọi tên biến)
+        # Tự động tìm key bất kể sếp đặt tên biến là gì
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
-        decoded = base64.b64decode(st.secrets[k_name]).decode()
-        info = json.loads(decoded)
-        creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+        if not k_name:
+            st.error("❌ Không tìm thấy biến Key trong Secrets!")
+            return None
+        
+        info = json.loads(base64.b64decode(st.secrets[k_name]).decode())
+        creds = Credentials.from_service_account_info(
+            info, 
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        )
         return gspread.authorize(creds)
-    except: return None
+    except Exception as e:
+        st.error(f"❌ Lỗi xác thực Key: {str(e)}")
+        return None
 
-st.set_page_config(page_title="4Oranges SDM Center", layout="wide")
+st.set_page_config(page_title="4Oranges SDM", layout="wide")
 st.title("🛡️ 4Oranges SDM - AI Command Center")
 
 client = get_client()
 
 if client:
     try:
-        # Mở Sheet bằng URL thực tế của sếp
-        url = "https://docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/edit"
-        sh = client.open_by_url(url).sheet1
+        # ID Sheet lấy trực tiếp từ URL sếp gửi
+        SPREADSHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
         
-        # LẤY DỮ LIỆU THÔ (Dạng mảng 2 chiều cơ bản nhất)
-        all_data = sh.get_all_values()
+        # Mở bằng ID để tránh lỗi định dạng URL
+        sh = client.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.get_worksheet(0) # Mở tab đầu tiên
         
-        if all_data:
+        # LẤY DỮ LIỆU
+        all_values = worksheet.get_all_values()
+        
+        if all_values:
             st.success("✅ HỆ THỐNG ĐÃ THÔNG SUỐT!")
             
-            # --- HIỂN THỊ CÁC Ô CHỈ SỐ NHANH ---
-            if len(all_data) > 1:
-                # Lấy dòng đầu tiên có dữ liệu (Dòng 2 trên Sheet)
-                row2 = all_data[1]
+            # Dashboard Widget
+            if len(all_values) > 1:
+                row2 = all_values[1]
                 c1, c2, c3 = st.columns(3)
-                c1.metric("THIẾT BỊ", row2[0] if row2[0] else "---")
-                c2.metric("TRẠNG THÁI", row2[1] if row2[1] else "---")
-                c3.metric("CẬP NHẬT", row2[3] if row2[3] else "---")
+                c1.metric("THIẾT BỊ", row2[0] if len(row2) > 0 else "---")
+                c2.metric("TRẠNG THÁI", row2[1] if len(row2) > 1 else "---")
+                c3.metric("LỆNH", row2[2] if len(row2) > 2 else "---")
             
             st.divider()
             
-            # --- HIỂN THỊ BẢNG DỮ LIỆU (Bản sao 1:1 từ Sheet) ---
-            st.write("### 📑 Chi tiết dữ liệu vận hành")
-            # Dùng st.table để đảm bảo mọi ô (kể cả ô trống) đều hiện lên rõ ràng
-            st.table(all_data)
+            # Hiển thị bảng 1:1 như Google Sheet
+            st.write("### 📑 Bảng dữ liệu thực tế")
+            st.table(all_values)
             
-            if st.button("🔄 Làm mới dữ liệu"):
-                st.rerun()
         else:
-            st.warning("⚠️ Chưa có dữ liệu trong Sheet.")
+            st.warning("⚠️ Sheet này hiện đang trống.")
+            
+    except gspread.exceptions.APIError as e:
+        st.error(f"❌ Lỗi API Google: Có thể sếp chưa bật 'Google Sheets API' trong Google Cloud Console.")
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error("❌ Không tìm thấy file Sheet. Kiểm tra lại ID hoặc quyền chia sẻ.")
     except Exception as e:
-        st.error(f"⚠️ Lỗi đọc dữ liệu: {e}")
+        st.error(f"❌ Lỗi không xác định: {str(e)}")
 else:
-    st.error("❌ Không tìm thấy Key trong Secrets. Sếp hãy kiểm tra lại nhé.")
+    st.info("💡 Mẹo: Hãy đảm bảo sếp đã dán đúng chuỗi Base64 vào Secrets.")
