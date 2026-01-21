@@ -1,44 +1,38 @@
 import streamlit as st
-import gspread
-import json
-import base64
-from google.oauth2.service_account import Credentials
+import pandas as pd
+import requests
 
-# --- PHẦN 1: KẾT NỐI ---
-st.title("🧪 Kiểm tra kết nối & Cấu trúc")
+st.title("🧪 Kiểm tra kết nối & Cấu trúc (Public CSV)")
+
+# 1. BƯỚC 1: KIỂM TRA KẾT NỐI
+# Sử dụng link CSV sếp vừa cung cấp
+CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/pub?gid=0&single=true&output=csv"
 
 try:
-    # Lấy đúng chìa khóa từ Secrets (không tự đoán tên biến)
-    # Sếp hãy kiểm tra tên biến trong Secrets là gì thì thay vào ['GCP_KEY'] nhé
-    k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+    # Thử tải file CSV từ link
+    response = requests.get(CSV_URL)
     
-    if k_name:
-        # Giải mã và nạp quyền
-        decoded_info = json.loads(base64.b64decode(st.secrets[k_name]).decode())
-        creds = Credentials.from_service_account_info(
-            decoded_info, 
-            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        )
-        client = gspread.authorize(creds)
+    if response.status_code == 200:
+        st.success("✅ BƯỚC 1: KẾT NỐI ĐẾN FILE CSV THÀNH CÔNG!")
         
-        # Mở Sheet bằng ID thực tế của sếp
-        SPREADSHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
-        sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+        # 2. BƯỚC 2: IN TÊN CÁC CỘT
+        # Đọc dữ liệu vào DataFrame của Pandas
+        # Lưu ý: Link này trả về CSV nên dùng pd.read_csv
+        from io import StringIO
+        csv_data = StringIO(response.text)
+        df = pd.read_csv(csv_data)
         
-        st.success("✅ ĐÃ KẾT NỐI ĐƯỢC VỚI GOOGLE SHEET!")
-
-        # --- PHẦN 2: IN TÊN CỘT ---
-        # Chỉ lấy duy nhất hàng 1 (hàng tiêu đề)
-        headers = sheet.row_values(1)
+        headers = df.columns.tolist()
         
         if headers:
-            st.write("### Danh sách tên cột tìm thấy:")
-            st.code(headers) # In ra dưới dạng mảng để sếp nhìn rõ nhất
+            st.write("### 📋 BƯỚC 2: DANH SÁCH CỘT TÌM THẤY")
+            for i, col_name in enumerate(headers):
+                st.info(f"Cột {i+1}: **{col_name}**")
         else:
-            st.warning("Kết nối được nhưng hàng 1 đang trống.")
+            st.warning("⚠️ Kết nối được nhưng file không có tiêu đề cột.")
             
     else:
-        st.error("Không tìm thấy Key trong Secrets. Sếp hãy kiểm tra lại bảng điều khiển Streamlit.")
+        st.error(f"❌ Bước 1 thất bại: Link trả về lỗi {response.status_code}")
 
 except Exception as e:
-    st.error(f"Lỗi: {str(e)}")
+    st.error(f"❌ Lỗi hệ thống: {str(e)}")
