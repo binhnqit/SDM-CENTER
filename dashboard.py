@@ -10,31 +10,43 @@ import json  # Đã thêm để sửa lỗi 'name json is not defined'
 st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_icon="🎨")
 
 def get_gsheet_client():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
-    if "raw_json" not in st.secrets:
-        st.error("❌ Không tìm thấy 'raw_json' trong Secrets!")
+    if "gcp_service_account" not in st.secrets:
+        st.error("❌ Thiếu cấu hình Secrets!")
         return None
-        
     try:
-        # Lấy chuỗi và dọn dẹp khoảng trắng đầu/cuối
-        json_string = st.secrets["raw_json"].strip()
+        # Lấy dict từ secrets
+        s = st.secrets["gcp_service_account"]
         
-        # Kiểm tra xem có dấu đóng ngoặc không
-        if not json_string.endswith("}"):
-            st.warning("⚠️ Cảnh báo: Chuỗi JSON trong Secrets dường như bị thiếu ký tự đóng ngoặc '}' ở cuối.")
+        # LỌC SẠCH KHÓA: Loại bỏ mọi ký tự không phải Base64/RSA chuẩn
+        # Đây là bước xử lý lỗi 'Short substrate' triệt để nhất
+        key = s["private_key"]
+        header = "-----BEGIN PRIVATE KEY-----"
+        footer = "-----END PRIVATE KEY-----"
         
-        creds_info = json.loads(json_string)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
+        # Chỉ lấy phần ruột và xóa sạch ký tự lạ
+        inner_key = key.replace(header, "").replace(footer, "")
+        clean_inner = re.sub(r'[^A-Za-z0-9+/=]', '', inner_key)
+        
+        # Xây dựng lại dictionary sạch 100%
+        creds_dict = {
+            "type": s["type"],
+            "project_id": s["project_id"],
+            "private_key_id": s["private_key_id"],
+            "private_key": f"{header}\n{clean_content}\n{footer}",
+            "client_email": s["client_email"],
+            "client_id": s["client_id"],
+            "auth_uri": s["auth_uri"],
+            "token_uri": s["token_uri"],
+            "auth_provider_x509_cert_url": s["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": s["client_x509_cert_url"]
+        }
+        
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
-    except json.JSONDecodeError as je:
-        st.error(f"❌ Lỗi định dạng JSON: {str(je)}")
-        st.info("Sếp hãy kiểm tra xem có dán thiếu phần cuối của file JSON không.")
-        return None
     except Exception as e:
-        st.error(f"❌ Lỗi hệ thống: {str(e)}")
+        st.error(f"❌ Lỗi nạp bảo mật: {str(e)}")
         return None
-
 # --- 2. GIAO DIỆN ĐIỀU HÀNH ---
 client = get_gsheet_client()
 
