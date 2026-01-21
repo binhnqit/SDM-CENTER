@@ -10,26 +10,22 @@ import os  # Đã thêm để sửa lỗi NameError: name 'os' is not defined
 st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_icon="🎨")
 
 def get_gsheet_client():
-    # Các quyền truy cập Google
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    key_file_path = "key.json"
     
-    # Tên file JSON sếp đã up lên GitHub (phải khớp 100% tên file)
-    key_file_path = "key.json" 
-    
-    # Kiểm tra file tồn tại
     if not os.path.exists(key_file_path):
-        st.error(f"❌ Không tìm thấy file '{key_file_path}' trong thư mục GitHub!")
-        st.info("Sếp hãy kiểm tra xem đã upload file JSON và đổi tên thành key.json chưa.")
+        st.error("❌ Không tìm thấy file key.json trên GitHub!")
         return None
         
     try:
-        # Nạp bảo mật trực tiếp từ file - Tuyệt đối không lỗi Base64 hay Substrate
+        # Sử dụng cache để không nạp lại file nhiều lần gây chậm
         creds = ServiceAccountCredentials.from_json_keyfile_name(key_file_path, scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"❌ Lỗi nạp bảo mật từ file: {str(e)}")
+        # Nếu lỗi JWT, khả năng cao là do file Key bị hỏng hoặc hết hạn
+        st.error(f"❌ Lỗi xác thực Google (JWT): Chìa khóa không khớp. Sếp hãy tạo lại Key mới!")
+        st.info("Chi tiết: " + str(e))
         return None
-
 # --- 2. GIAO DIỆN ĐIỀU HÀNH ---
 client = get_gsheet_client()
 
