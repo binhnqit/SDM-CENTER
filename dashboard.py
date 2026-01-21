@@ -4,45 +4,46 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 
-# 1. Kết nối (Dùng lại đúng cái chìa khóa sếp đã mở được lúc nãy)
-def get_client():
+# --- BƯỚC 1: KIỂM TRA KẾT NỐI ---
+def check_connection():
+    st.title("🧪 Kiểm tra kết nối & Cấu trúc")
+    
     try:
+        # Tự động tìm Key trong Secrets
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+        if not k_name:
+            st.error("❌ Bước 1 Thất bại: Không tìm thấy Key trong mục Secrets.")
+            return
+        
+        # Giải mã Key
         info = json.loads(base64.b64decode(st.secrets[k_name]).decode())
-        creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-        return gspread.authorize(creds)
-    except: return None
-
-st.set_page_config(page_title="4Oranges SDM", layout="wide")
-st.title("🛡️ 4Oranges SDM - AI Command Center")
-
-client = get_client()
-
-if client:
-    try:
-        # ID Sheet lấy từ link của sếp
+        creds = Credentials.from_service_account_info(
+            info, 
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        )
+        client = gspread.authorize(creds)
+        
+        # Mở Sheet bằng ID (Lấy từ URL sếp gửi)
         SPREADSHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
         sh = client.open_by_key(SPREADSHEET_ID)
         worksheet = sh.get_worksheet(0)
         
-        # LẤY DỮ LIỆU DẠNG DANH SÁCH (Mảng thô)
-        data = worksheet.get_all_values()
+        st.success("✅ Bước 1: Kết nối đến Google Sheet THÀNH CÔNG!")
         
-        if data:
-            st.success("✅ KẾT NỐI LẠI THÀNH CÔNG!")
-            
-            # CHỈ DÙNG 1 HÀM DUY NHẤT ĐỂ HIỂN THỊ - KHÔNG CHIA CỘT PHỨC TẠP
-            # Để tránh lỗi Streamlit không dựng được giao diện
-            st.write("### Dữ liệu máy pha thực tế:")
-            st.dataframe(data) # Dùng dataframe cơ bản nhất, nó rất bền
-            
-            if st.button("🔄 Bấm để ép tải lại dữ liệu"):
-                st.rerun()
+        # --- BƯỚC 2: IN TÊN CỘT ---
+        # Lấy duy nhất dòng 1
+        headers = worksheet.row_values(1)
+        
+        if headers:
+            st.write("### 📋 Bước 2: Danh sách các cột tìm thấy:")
+            for i, name in enumerate(headers):
+                st.info(f"Cột số {i+1}: **{name}**")
         else:
-            st.warning("⚠️ Sheet trống.")
-            
+            st.warning("⚠️ Bước 2: Kết nối được nhưng không tìm thấy dữ liệu ở dòng 1.")
+
     except Exception as e:
         st.error(f"❌ Lỗi phát sinh: {str(e)}")
-        st.info("Mẹo: Nếu lỗi, sếp hãy vào 'Manage app' -> chọn 'Reboot App' để xóa bộ nhớ đệm.")
-else:
-    st.error("❌ Không tìm thấy Key trong Secrets. Sếp kiểm tra lại nhé.")
+        st.info("Mẹo: Đảm bảo email Service Account đã được Share quyền Editor trong file Sheet.")
+
+# Chạy kiểm tra
+check_connection()
