@@ -21,9 +21,9 @@ def start_connection():
         client = gspread.authorize(creds)
         
         # 3. ID FILE GỐC (Trích xuất từ link sếp gửi)
-        # Link: docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJw/edit
+        # Link: https://docs.google.com/spreadsheets/d/1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI/edit?gid=0#gid=0
         # ID CHUẨN LÀ CỤM DƯỚI ĐÂY:
-        SHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJw"
+        SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI"
         
         # Mở bằng ID - Đây là cách an toàn nhất tránh lỗi 404
         sh = client.open_by_key(SHEET_ID)
