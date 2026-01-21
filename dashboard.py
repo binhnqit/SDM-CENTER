@@ -5,11 +5,11 @@ import base64
 import pandas as pd
 from google.oauth2.service_account import Credentials
 
-# 1. Kết nối an toàn (Tự động nhận diện mọi loại Key sếp đã đặt)
+# 1. Kết nối bảo mật (Tự động quét Key)
 def get_gsheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
-        # Tìm bất kỳ biến nào có chứa thông tin Key trong Secrets
+        # Tìm bất kỳ biến nào chứa mã Key trong Secrets
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
         if not k_name: return None
         decoded_data = base64.b64decode(st.secrets[k_name]).decode('utf-8')
@@ -18,58 +18,54 @@ def get_gsheet_client():
         return gspread.authorize(creds)
     except: return None
 
-# Giao diện DashBoard
-st.set_page_config(page_title="4Oranges AI Center", layout="wide")
+st.set_page_config(page_title="4Oranges SDM Center", layout="wide")
 st.title("🛡️ 4Oranges SDM - AI Command Center")
 
 client = get_gsheet_client()
 
 if client:
     try:
-        # ID Sheet từ URL của sếp
+        # URL Sheet từ file của sếp
         SHEET_URL = "https://docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/edit"
         sheet = client.open_by_url(SHEET_URL).sheet1
         
-        # LẤY DỮ LIỆU THÔ (Chống mọi lỗi cấu trúc)
+        # Lấy dữ liệu thô (để chống lỗi cấu trúc dòng trống)
         raw_rows = sheet.get_all_values()
         
         if len(raw_rows) > 0:
-            # Ép tên cột theo đúng thực tế sếp thấy trên màn hình
+            # Ép tên cột theo đúng thực tế sếp đang có trên màn hình
             headers = ["MACHINE_ID", "STATUS", "COMMAND", "LAST_SEEN", "HISTORY"]
             
-            # Tạo DataFrame từ dòng 2 trở đi
-            # Chúng ta lấy đủ 5 cột đầu tiên, bỏ qua các cột thừa (F, G...) nếu có
-            data = [row[:5] for row in raw_rows[1:]]
-            df = pd.DataFrame(data, columns=headers)
+            # Chỉ lấy tối đa 5 cột đầu tiên để tránh lỗi nếu sếp gõ thừa vào cột F, G
+            data_clean = [row[:5] for row in raw_rows[1:]]
             
-            # Làm sạch: Loại bỏ những dòng trắng hoàn toàn
+            # Tạo bảng dữ liệu
+            df = pd.DataFrame(data_clean, columns=headers)
+            
+            # Loại bỏ các dòng hoàn toàn không có chữ nào (dòng trắng)
             df = df.replace('', pd.NA).dropna(how='all')
 
-            # --- HIỂN THỊ CHỈ SỐ ---
-            st.success("✅ HỆ THỐNG ĐÃ THÔNG SUỐT!")
+            # --- HIỂN THỊ KẾT QUẢ ---
+            st.success("✅ ĐÃ KẾT NỐI VÀ ĐỒNG BỘ DỮ LIỆU THÀNH CÔNG!")
             
-            m1, m2, m3 = st.columns(3)
-            # Lấy thông tin từ dòng đầu tiên có ID máy
-            main_machine = df[df['MACHINE_ID'].notna()].iloc[0] if not df[df['MACHINE_ID'].notna()].empty else None
-            
-            if main_machine is not None:
-                m1.metric("Thiết bị", main_machine['MACHINE_ID'])
-                m2.metric("Trạng thái", main_machine['STATUS'])
-                m3.metric("Lệnh cuối", main_machine['HISTORY'][:15] + "..." if len(main_machine['HISTORY']) > 15 else main_machine['HISTORY'])
+            # Lấy thông tin máy đầu tiên để hiện Metric cho oai
+            if not df.empty:
+                m1, m2 = st.columns(2)
+                m1.metric("Thiết bị chính", df['MACHINE_ID'].iloc[0])
+                m2.metric("Trạng thái", df['STATUS'].iloc[0] or "N/A")
 
             st.divider()
+            st.subheader("📑 Danh sách chi tiết & Nhật ký lệnh")
             
-            # Hiển thị bảng nhật ký (bao gồm cả các dòng NONE)
-            st.subheader("📑 Nhật ký vận hành (History Log)")
-            st.dataframe(df.fillna(""), use_container_width=True, hide_index=True)
+            # Hiển thị bảng đẹp, thay thế giá trị rỗng bằng dấu gạch ngang
+            st.dataframe(df.fillna("-"), use_container_width=True, hide_index=True)
             
-            if st.button("🔄 Làm mới dữ liệu"):
+            if st.button("🔄 Làm mới dữ liệu từ Google Sheet"):
                 st.rerun()
         else:
-            st.warning("⚠️ Sheet đang trống dữ liệu.")
+            st.warning("⚠️ Google Sheet đang trống, sếp hãy nhập dữ liệu vào.")
             
     except Exception as e:
         st.error(f"⚠️ Lỗi xử lý: {str(e)}")
-        st.info("Mẹo: Đảm bảo sếp không xóa các tiêu đề ở dòng 1 của Google Sheet.")
 else:
-    st.error("❌ Không thể kết nối. Kiểm tra lại Key trong Secrets.")
+    st.error("❌ Không thể kết nối. Sếp hãy kiểm tra lại mục Secrets trên Streamlit.")
