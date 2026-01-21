@@ -12,15 +12,18 @@ st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # Kiểm tra xem sếp đã dán 'raw_json' vào Secrets chưa
+    # 1. Kiểm tra xem biến raw_json có tồn tại trong Secrets không
     if "raw_json" not in st.secrets:
-        st.error("❌ Không tìm thấy 'raw_json' trong Secrets! Sếp hãy kiểm tra lại tên biến.")
+        st.error("❌ Thiếu 'raw_json' trong Secrets!")
         return None
         
     try:
-        # Giải pháp 1: Đọc trực tiếp từ chuỗi JSON thô để tránh lỗi byte lạ
+        # 2. Chuyển đổi chuỗi văn bản (str) thành một Dictionary của Python
         creds_info = json.loads(st.secrets["raw_json"])
+        
+        # 3. Nạp từ Dictionary (Sửa lỗi 'seekable bit stream' tại đây)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
+        
         return gspread.authorize(creds)
     except Exception as e:
         st.error(f"❌ Lỗi nạp bảo mật: {str(e)}")
