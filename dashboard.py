@@ -11,30 +11,35 @@ import json
 st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_icon="🎨")
 
 def get_gsheet_client():
-    # Khai báo các thư viện cần thiết ngay trong hàm để đảm bảo an toàn
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
     if "gcp_service_account" not in st.secrets:
-        st.error("❌ Thiếu cấu hình [gcp_service_account] trong Secrets!")
+        st.error("❌ Thiếu cấu hình Secrets!")
         return None
         
     try:
-        # Lấy dữ liệu từ Secrets
         s = st.secrets["gcp_service_account"]
         
-        # --- BỘ LỌC NANO: XỬ LÝ LỖI SHORT SUBSTRATE & UNUSED BYTES ---
+        # --- THUẬT TOÁN PHẪU THUẬT CHUỖI BASE64 ---
         raw_key = s["private_key"]
         header = "-----BEGIN PRIVATE KEY-----"
         footer = "-----END PRIVATE KEY-----"
         
-        # Lấy phần ruột và dùng Regex (re) lọc sạch mọi ký tự lạ không phải Base64
+        # 1. Lấy phần lõi
         content = raw_key.replace(header, "").replace(footer, "")
-        clean_content = re.sub(r'[^A-Za-z0-9+/=]', '', content)
         
-        # Xây dựng lại Key chuẩn 100%
+        # 2. Loại bỏ tuyệt đối mọi ký tự rác (bao gồm cả dấu cách, xuống dòng, ký tự đặc biệt)
+        # Chỉ giữ lại A-Z, a-z, 0-9, +, /
+        clean_content = re.sub(r'[^A-Za-z0-9+/]', '', content)
+        
+        # 3. ÉP VỀ BỘI SỐ CỦA 4 (Sửa lỗi 41 characters)
+        # Base64 chuẩn phải chia hết cho 4. Nếu dư, chúng ta bù dấu '='
+        missing_padding = len(clean_content) % 4
+        if missing_padding:
+            clean_content += '=' * (4 - missing_padding)
+            
+        # 4. Tái cấu trúc khóa chuẩn RSA
         fixed_key = f"{header}\n{clean_content}\n{footer}"
         
-        # Tạo Dictionary để nạp vào Google API
         creds_dict = {
             "type": s["type"],
             "project_id": s["project_id"],
@@ -42,9 +47,9 @@ def get_gsheet_client():
             "private_key": fixed_key,
             "client_email": s["client_email"],
             "client_id": s["client_id"],
-            "auth_uri": s.get("auth_uri", "https://accounts.google.com/o/oauth2/auth"),
-            "token_uri": s.get("token_uri", "https://oauth2.googleapis.com/token"),
-            "auth_provider_x509_cert_url": s.get("auth_provider_x509_cert_url", "https://www.googleapis.com/oauth2/v1/certs"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.google.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
             "client_x509_cert_url": s["client_x509_cert_url"]
         }
         
