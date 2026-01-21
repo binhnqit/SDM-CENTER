@@ -5,14 +5,32 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
-# --- 1. KẾT NỐI AN TOÀN ---
+# --- KẾT NỐI AN TOÀN ---
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # Đọc thông tin bảo mật từ Streamlit Secrets thay vì file json
-    creds_dict = st.secrets["gcp_service_account"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return gspread.authorize(creds)
+    
+    # Kiểm tra xem Secrets đã được cấu hình chưa
+    if "gcp_service_account" not in st.secrets:
+        st.error("❌ Chưa tìm thấy cấu hình Secrets 'gcp_service_account' trên Streamlit Cloud.")
+        return None
+        
+    try:
+        # Chuyển đổi từ Secrets của Streamlit sang Dict để nạp vào API
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"❌ Lỗi nạp thông tin bảo mật: {e}")
+        return None
 
+# Thực thi kết nối
+client = get_gsheet_client()
+
+if client:
+    # Tiếp tục logic đọc Sheet của sếp...
+    sheet_url = "LINK_SHEET_CUA_SEP"
+    sheet = client.open_by_url(sheet_url).sheet1
+    st.success("✅ Hệ thống đã kết nối bảo mật thành công!")
 # --- 2. GIAO DIỆN DASHBOARD ---
 st.set_page_config(page_title="4Oranges AI Command Center", layout="wide")
 st.title("🤖 4Oranges SDM - Hệ Thống Quản Trị AI")
