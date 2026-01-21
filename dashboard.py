@@ -3,12 +3,11 @@ import gspread
 import json
 import base64
 from google.oauth2.service_account import Credentials
-import pandas as pd
 
-# 1. Kết nối (Dùng phương thức trực tiếp nhất)
+# 1. Kết nối thẳng vào Google Sheet
 def get_client():
     try:
-        # Lấy Key từ bất kỳ biến nào sếp đã lưu trong Secrets
+        # Tự động quét tìm Key trong Secrets của sếp
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
         info = json.loads(base64.b64decode(st.secrets[k_name]).decode())
         creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
@@ -22,32 +21,36 @@ client = get_client()
 
 if client:
     try:
-        # Mở đúng file Sheet của sếp
+        # Mở Sheet bằng URL
         url = "https://docs.google.com/spreadsheets/d/1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/edit"
         sh = client.open_by_url(url).sheet1
         
-        # Đọc toàn bộ dữ liệu dưới dạng bảng thô
-        rows = sh.get_all_values()
+        # Lấy toàn bộ dữ liệu thô (Mảng 2 chiều)
+        raw_data = sh.get_all_values()
         
-        if len(rows) > 0:
-            # Ép đúng 5 tên cột theo ảnh sếp gửi
-            cols = ["MACHINE_ID", "STATUS", "COMMAND", "LAST_SEEN", "HISTORY"]
+        if raw_data:
+            st.success("✅ ĐÃ KẾT NỐI - DỮ LIỆU THỰC TẾ TRÊN SHEET:")
             
-            # Chỉ lấy dữ liệu từ dòng 2, và chỉ lấy đúng 5 cột đầu tiên
-            data = [r[:5] for r in rows[1:]]
+            # 2. Hiển thị Dashboard đơn giản
+            # Lấy dòng 2 (Dòng dữ liệu đầu tiên) để hiện thông số nhanh
+            if len(raw_data) > 1:
+                top = raw_data[1]
+                c1, c2 = st.columns(2)
+                c1.metric("MÁY PHA", top[0] if top[0] else "---")
+                c2.metric("TRẠNG THÁI", top[1] if top[1] else "---")
             
-            # Tạo bảng hiển thị
-            df = pd.DataFrame(data, columns=cols)
+            st.divider()
             
-            # HIỂN THỊ NGAY LẬP TỨC
-            st.success("✅ KẾT NỐI THÀNH CÔNG")
+            # 3. HIỂN THỊ BẢNG DỮ LIỆU (Dùng hàm cơ bản nhất của Streamlit)
+            # Hàm này sẽ hiện đúng những gì sếp thấy trên Google Sheet
+            st.write("### 📑 Chi tiết bảng dữ liệu (5x5)")
+            st.table(raw_data) 
             
-            # Hiển thị bảng dữ liệu sếp cần
-            st.table(df) # Dùng st.table để hiện dữ liệu thô, rõ ràng nhất
-            
+            if st.button("🔄 Bấm để làm mới dữ liệu"):
+                st.rerun()
         else:
-            st.warning("Sheet đang trống.")
+            st.warning("Sheet không có dữ liệu.")
     except Exception as e:
-        st.error(f"Lỗi: {e}")
+        st.error(f"Lỗi đọc Sheet: {str(e)}")
 else:
-    st.error("Chưa kết nối được Google Cloud. Kiểm tra lại mục Secrets.")
+    st.error("❌ Lỗi kết nối Google Cloud. Sếp kiểm tra lại Secrets nhé.")
