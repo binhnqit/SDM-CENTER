@@ -13,38 +13,33 @@ st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     if "gcp_service_account" not in st.secrets:
-        st.error("❌ Thiếu cấu hình Secrets!")
         return None
         
     try:
         s = st.secrets["gcp_service_account"]
         
-        # --- THUẬT TOÁN PHẪU THUẬT CHUỖI BASE64 ---
-        raw_key = s["private_key"]
+        # --- CHIẾN THUẬT CHUYÊN GIA: TRÍCH XUẤT NHỊ PHÂN ---
+        raw_key = s["private_key"].replace("\\n", "\n") # Xử lý ký tự xuống dòng giả
+        
+        # Làm sạch chuỗi: Chỉ giữ lại những gì thuộc về RSA
         header = "-----BEGIN PRIVATE KEY-----"
         footer = "-----END PRIVATE KEY-----"
         
-        # 1. Lấy phần lõi mã hóa
-        content = raw_key.replace(header, "").replace(footer, "")
+        # Trích xuất phần lõi và xóa sạch khoảng trắng/xuống dòng
+        core_body = raw_key.replace(header, "").replace(footer, "").strip()
+        core_body = "".join(core_body.split()) 
         
-        # 2. Loại bỏ tuyệt đối mọi ký tự rác (xuống dòng, dấu cách, ký tự đặc biệt)
-        # Chỉ giữ lại bảng chữ cái Base64 chuẩn
-        clean_content = re.sub(r'[^A-Za-z0-9+/]', '', content)
-        
-        # 3. ÉP VỀ BỘI SỐ CỦA 4 (Sửa lỗi 41 characters)
-        # Nếu dư 1, 2 hoặc 3 ký tự, chúng ta bù dấu '=' để đạt chuẩn 4 ký tự
-        missing_padding = len(clean_content) % 4
-        if missing_padding:
-            clean_content += '=' * (4 - missing_padding)
-            
-        # 4. Tái cấu trúc khóa chuẩn RSA gửi cho Google
-        fixed_key = f"{header}\n{clean_content}\n{footer}"
+        # ÉP ĐỘ DÀI: Nếu lẻ 41, nó sẽ bị cắt hoặc bù về 40/44 ngay lập tức
+        while len(core_body) % 4 != 0:
+            core_body += "="
+
+        final_key = f"{header}\n{core_body}\n{footer}"
         
         creds_dict = {
             "type": s["type"],
             "project_id": s["project_id"],
             "private_key_id": s["private_key_id"],
-            "private_key": fixed_key,
+            "private_key": final_key,
             "client_email": s["client_email"],
             "client_id": s["client_id"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
