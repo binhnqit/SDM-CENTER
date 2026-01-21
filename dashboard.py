@@ -1,38 +1,63 @@
 import streamlit as st
+import gspread
+import json
+import base64
+from google.oauth2.service_account import Credentials
 import pandas as pd
-import requests
 
-st.title("🧪 Kiểm tra kết nối & Cấu trúc (Public CSV)")
+st.set_page_config(page_title="4Oranges Secure Center", layout="wide")
+st.title("🛡️ 4Oranges SDM - AI Command Center (Secure Mode)")
 
-# 1. BƯỚC 1: KIỂM TRA KẾT NỐI
-# Sử dụng link CSV sếp vừa cung cấp
-CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH/pub?gid=0&single=true&output=csv"
+# --- HÀM KẾT NỐI BẢO MẬT ---
+def get_secure_client():
+    try:
+        # Tìm key trong Secrets (Dùng lại chìa khóa cũ của sếp)
+        k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+        if not k_name:
+            st.error("Chưa cấu hình Key trong Secrets!")
+            return None
+        
+        # Giải mã và cấp quyền
+        decoded = base64.b64decode(st.secrets[k_name]).decode()
+        info = json.loads(decoded)
+        creds = Credentials.from_service_account_info(
+            info, 
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        )
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Lỗi chìa khóa bảo mật: {e}")
+        return None
 
-try:
-    # Thử tải file CSV từ link
-    response = requests.get(CSV_URL)
-    
-    if response.status_code == 200:
-        st.success("✅ BƯỚC 1: KẾT NỐI ĐẾN FILE CSV THÀNH CÔNG!")
+client = get_secure_client()
+
+if client:
+    try:
+        # ID Sheet bảo mật (Lấy từ URL của sếp)
+        SHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
+        sh = client.open_by_key(SHEET_ID)
+        worksheet = sh.get_worksheet(0)
         
-        # 2. BƯỚC 2: IN TÊN CÁC CỘT
-        # Đọc dữ liệu vào DataFrame của Pandas
-        # Lưu ý: Link này trả về CSV nên dùng pd.read_csv
-        from io import StringIO
-        csv_data = StringIO(response.text)
-        df = pd.read_csv(csv_data)
+        # Lấy dữ liệu
+        raw_data = worksheet.get_all_values()
         
-        headers = df.columns.tolist()
-        
-        if headers:
-            st.write("### 📋 BƯỚC 2: DANH SÁCH CỘT TÌM THẤY")
-            for i, col_name in enumerate(headers):
-                st.info(f"Cột {i+1}: **{col_name}**")
-        else:
-            st.warning("⚠️ Kết nối được nhưng file không có tiêu đề cột.")
+        if len(raw_data) > 0:
+            st.success("🔒 KẾT NỐI BẢO MẬT THÀNH CÔNG")
             
-    else:
-        st.error(f"❌ Bước 1 thất bại: Link trả về lỗi {response.status_code}")
+            # Chuyển thành bảng để hiển thị chuyên nghiệp
+            # Cố định đúng 5 cột sếp đã xác nhận ở bước trước
+            headers = raw_data[0]
+            df = pd.DataFrame(raw_data[1:], columns=headers)
+            
+            # Hiển thị Dashboard
+            st.subheader("📑 Bảng điều khiển thiết bị")
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            if st.button("🔄 Refresh Data"):
+                st.rerun()
+        else:
+            st.warning("Sheet trống dữ liệu.")
 
-except Exception as e:
-    st.error(f"❌ Lỗi hệ thống: {str(e)}")
+    except Exception as e:
+        st.error(f"Lỗi truy cập bảo mật: {e}")
+        st.info("💡 Hãy đảm bảo sếp đã Share quyền Editor cho email Service Account trong Google Sheet.")
