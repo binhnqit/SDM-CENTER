@@ -24,20 +24,20 @@ def get_gsheet_client():
         header = "-----BEGIN PRIVATE KEY-----"
         footer = "-----END PRIVATE KEY-----"
         
-        # 1. Lấy phần lõi
+        # 1. Lấy phần lõi mã hóa
         content = raw_key.replace(header, "").replace(footer, "")
         
-        # 2. Loại bỏ tuyệt đối mọi ký tự rác (bao gồm cả dấu cách, xuống dòng, ký tự đặc biệt)
-        # Chỉ giữ lại A-Z, a-z, 0-9, +, /
+        # 2. Loại bỏ tuyệt đối mọi ký tự rác (xuống dòng, dấu cách, ký tự đặc biệt)
+        # Chỉ giữ lại bảng chữ cái Base64 chuẩn
         clean_content = re.sub(r'[^A-Za-z0-9+/]', '', content)
         
         # 3. ÉP VỀ BỘI SỐ CỦA 4 (Sửa lỗi 41 characters)
-        # Base64 chuẩn phải chia hết cho 4. Nếu dư, chúng ta bù dấu '='
+        # Nếu dư 1, 2 hoặc 3 ký tự, chúng ta bù dấu '=' để đạt chuẩn 4 ký tự
         missing_padding = len(clean_content) % 4
         if missing_padding:
             clean_content += '=' * (4 - missing_padding)
             
-        # 4. Tái cấu trúc khóa chuẩn RSA
+        # 4. Tái cấu trúc khóa chuẩn RSA gửi cho Google
         fixed_key = f"{header}\n{clean_content}\n{footer}"
         
         creds_dict = {
@@ -48,7 +48,7 @@ def get_gsheet_client():
             "client_email": s["client_email"],
             "client_id": s["client_id"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.google.com/token",
+            "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
             "client_x509_cert_url": s["client_x509_cert_url"]
         }
@@ -58,7 +58,6 @@ def get_gsheet_client():
     except Exception as e:
         st.error(f"❌ Lỗi nạp bảo mật chi tiết: {str(e)}")
         return None
-
 # --- 2. GIAO DIỆN ĐIỀU HÀNH ---
 client = get_gsheet_client()
 
