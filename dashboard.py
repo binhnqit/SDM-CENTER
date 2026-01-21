@@ -18,15 +18,21 @@ def get_gsheet_client():
         return None
         
     try:
-        # Nạp trực tiếp Dictionary từ JSON thô để bảo toàn chữ ký JWT
-        creds_info = json.loads(st.secrets["gcp_json_raw"])
+        # Lấy chuỗi từ Secrets và dọn dẹp các khoảng trắng thừa đầu/cuối
+        json_str = st.secrets["gcp_json_raw"].strip()
+        
+        # Nạp Dictionary từ JSON
+        creds_info = json.loads(json_str)
+        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         return gspread.authorize(creds)
+    except json.JSONDecodeError as e:
+        st.error(f"❌ Lỗi định dạng JSON trong Secrets: {str(e)}")
+        st.info("Sếp hãy kiểm tra xem có dán thiếu dấu ngoặc kép hoặc dấu phẩy không.")
+        return None
     except Exception as e:
         st.error(f"❌ Lỗi xác thực JWT: {str(e)}")
-        st.info("Mẹo: Sếp hãy tải lại file JSON mới từ Google Cloud và dán lại nếu vẫn lỗi.")
         return None
-
 # --- Khởi chạy Dashboard ---
 client = get_gsheet_client()
 if client:
