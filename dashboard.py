@@ -12,46 +12,20 @@ st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_
 
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    if "gcp_service_account" not in st.secrets:
+    
+    # Đường dẫn tới file JSON sếp vừa up lên GitHub
+    key_file_path = "key.json"
+    
+    if not os.path.exists(key_file_path):
+        st.error(f"❌ Không tìm thấy file {key_file_path} trên thư mục GitHub!")
         return None
         
     try:
-        s = st.secrets["gcp_service_account"]
-        
-        # --- CHIẾN THUẬT CHUYÊN GIA: TRÍCH XUẤT NHỊ PHÂN ---
-        raw_key = s["private_key"].replace("\\n", "\n") # Xử lý ký tự xuống dòng giả
-        
-        # Làm sạch chuỗi: Chỉ giữ lại những gì thuộc về RSA
-        header = "-----BEGIN PRIVATE KEY-----"
-        footer = "-----END PRIVATE KEY-----"
-        
-        # Trích xuất phần lõi và xóa sạch khoảng trắng/xuống dòng
-        core_body = raw_key.replace(header, "").replace(footer, "").strip()
-        core_body = "".join(core_body.split()) 
-        
-        # ÉP ĐỘ DÀI: Nếu lẻ 41, nó sẽ bị cắt hoặc bù về 40/44 ngay lập tức
-        while len(core_body) % 4 != 0:
-            core_body += "="
-
-        final_key = f"{header}\n{core_body}\n{footer}"
-        
-        creds_dict = {
-            "type": s["type"],
-            "project_id": s["project_id"],
-            "private_key_id": s["private_key_id"],
-            "private_key": final_key,
-            "client_email": s["client_email"],
-            "client_id": s["client_id"],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": s["client_x509_cert_url"]
-        }
-        
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        # Nạp trực tiếp từ file - Cách này miễn nhiễm với lỗi 'Short substrate'
+        creds = ServiceAccountCredentials.from_json_keyfile_name(key_file_path, scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"❌ Lỗi nạp bảo mật chi tiết: {str(e)}")
+        st.error(f"❌ Lỗi nạp bảo mật: {str(e)}")
         return None
 # --- 2. GIAO DIỆN ĐIỀU HÀNH ---
 client = get_gsheet_client()
