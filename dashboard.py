@@ -1,41 +1,36 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import gspread
 import json
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+import gspread
+import pandas as pd
 from google.oauth2.service_account import Credentials
-import os  # Đã thêm để sửa lỗi NameError: name 'os' is not defined
+from datetime import datetime
 
 # --- 1. CẤU HÌNH HỆ THỐNG ---
 st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_icon="🎨")
 
- def get_gsheet_client():
-    # 1. Định nghĩa quyền truy cập
+def get_gsheet_client():
+    # Định nghĩa quyền truy cập
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
     
     try:
-        # 2. Lấy chuỗi JSON thô từ Secrets
-        # Tư duy mới: Xem nó như một biến dữ liệu, không phải một file
-        raw_json = st.secrets["gcp_json_raw"]
-        info = json.loads(raw_json)
+        # Lấy JSON thô từ Secrets
+        if "gcp_json_raw" not in st.secrets:
+            st.error("❌ Thiếu 'gcp_json_raw' trong Secrets!")
+            return None
+            
+        # Chuyển chuỗi thành Dictionary
+        info = json.loads(st.secrets["gcp_json_raw"])
         
-        # 3. Nạp thẳng từ Dictionary vào bộ nhớ (Không thông qua file)
-        # Hàm 'from_service_account_info' là chìa khóa để diệt lỗi 'bit stream'
+        # Nạp trực tiếp từ bộ nhớ (Sửa lỗi Bit Stream & JWT Signature)
         creds = Credentials.from_service_account_info(info, scopes=scopes)
-        
         return gspread.authorize(creds)
     except Exception as e:
         st.error(f"❌ Lỗi mổ xẻ hệ thống: {str(e)}")
         return None
-# --- Khởi chạy Dashboard ---
-client = get_gsheet_client()
-if client:
-    st.success("✅ Hệ thống 4Oranges đã thông suốt!")
+
 # --- 2. GIAO DIỆN ĐIỀU HÀNH ---
 client = get_gsheet_client()
 
@@ -50,48 +45,28 @@ if client:
         df = pd.DataFrame(data)
 
         if not df.empty:
-            # AI Tracking Online/Offline
-            df['LAST_SEEN'] = pd.to_datetime(df['LAST_SEEN'], errors='coerce')
-            now = datetime.now()
-            df['STATUS'] = df['LAST_SEEN'].apply(
-                lambda x: '🟢 Online' if (not pd.isna(x) and (now - x).total_seconds() < 600) else '🔴 Offline'
-            )
-
             st.title("🛡️ 4Oranges SDM - Hệ Thống Điều Hành AI")
             
-            # --- TỔNG QUAN ---
+            # Xử lý trạng thái Online/Offline
+            if 'LAST_SEEN' in df.columns:
+                df['LAST_SEEN'] = pd.to_datetime(df['LAST_SEEN'], errors='coerce')
+                now = datetime.now()
+                df['STATUS'] = df['LAST_SEEN'].apply(
+                    lambda x: '🟢 Online' if (not pd.isna(x) and (now - x).total_seconds() < 600) else '🔴 Offline'
+                )
+
+            # --- HIỂN THỊ CHỈ SỐ ---
             c1, c2, c3 = st.columns(3)
             c1.metric("Tổng máy đại lý", len(df))
-            c2.metric("Máy đang chạy", len(df[df['STATUS'] == '🟢 Online']))
-            c3.metric("Lệnh Khóa", len(df[df['COMMAND'] == 'LOCK']))
+            if 'STATUS' in df.columns:
+                c2.metric("Máy đang chạy", len(df[df['STATUS'] == '🟢 Online']))
+            if 'COMMAND' in df.columns:
+                c3.metric("Lệnh Khóa", len(df[df['COMMAND'] == 'LOCK']))
 
             st.divider()
 
-            # --- ĐIỀU KHIỂN & BIỂU ĐỒ ---
-            left, right = st.columns([1, 2])
-            with left:
-                st.subheader("🕹️ Điều khiển Remote")
-                target = st.selectbox("Chọn ID Máy", df['MACHINE_ID'].unique())
-                
-                col_btn1, col_btn2 = st.columns(2)
-                if col_btn1.button("🔒 KHÓA MÁY", use_container_width=True, type="primary"):
-                    cell = sheet_obj.find(str(target))
-                    sheet_obj.update_cell(cell.row, 3, "LOCK")
-                    st.toast(f"Đã gửi lệnh KHÓA tới {target}")
-                    st.rerun()
-                if col_btn2.button("🔓 MỞ KHÓA", use_container_width=True):
-                    cell = sheet_obj.find(str(target))
-                    sheet_obj.update_cell(cell.row, 3, "NONE")
-                    st.toast(f"Đã mở khóa máy {target}")
-                    st.rerun()
-
-            with right:
-                st.subheader("📊 Phân tích màu sắc")
-                if 'HISTORY' in df.columns:
-                    fig = px.bar(df['HISTORY'].value_counts().head(5), orientation='h', color_discrete_sequence=['#FF4B4B'])
-                    st.plotly_chart(fig, use_container_width=True)
-
-            st.subheader("📑 Danh sách chi tiết")
+            # --- DANH SÁCH CHI TIẾT ---
+            st.subheader("📑 Danh sách chi tiết hệ thống máy pha")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     except Exception as e:
