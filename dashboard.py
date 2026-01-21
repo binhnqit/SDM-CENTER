@@ -11,21 +11,25 @@ st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_
 
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    key_file_path = "key.json"
     
-    if not os.path.exists(key_file_path):
-        st.error("❌ Không tìm thấy file key.json trên GitHub!")
+    if "gcp_json_raw" not in st.secrets:
+        st.error("❌ Thiếu biến 'gcp_json_raw' trong Secrets!")
         return None
         
     try:
-        # Sử dụng cache để không nạp lại file nhiều lần gây chậm
-        creds = ServiceAccountCredentials.from_json_keyfile_name(key_file_path, scope)
+        # Nạp trực tiếp Dictionary từ JSON thô để bảo toàn chữ ký JWT
+        creds_info = json.loads(st.secrets["gcp_json_raw"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         return gspread.authorize(creds)
     except Exception as e:
-        # Nếu lỗi JWT, khả năng cao là do file Key bị hỏng hoặc hết hạn
-        st.error(f"❌ Lỗi xác thực Google (JWT): Chìa khóa không khớp. Sếp hãy tạo lại Key mới!")
-        st.info("Chi tiết: " + str(e))
+        st.error(f"❌ Lỗi xác thực JWT: {str(e)}")
+        st.info("Mẹo: Sếp hãy tải lại file JSON mới từ Google Cloud và dán lại nếu vẫn lỗi.")
         return None
+
+# --- Khởi chạy Dashboard ---
+client = get_gsheet_client()
+if client:
+    st.success("✅ Hệ thống 4Oranges đã thông suốt!")
 # --- 2. GIAO DIỆN ĐIỀU HÀNH ---
 client = get_gsheet_client()
 
