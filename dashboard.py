@@ -11,22 +11,45 @@ def get_gsheet_client():
         return None
         
     try:
+        # 1. Lấy dữ liệu từ Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Xử lý triệt để các ký tự xuống dòng lạ và khoảng trắng
-        key = creds_dict["private_key"]
-        # Loại bỏ các dấu cách nằm giữa chuỗi và các ký tự điều hướng lạ
-        clean_key = key.replace("\\n", "\n").replace(" ", "").replace("\n", " ").replace("-----BEGINPRIVATEKEY-----", "-----BEGIN PRIVATE KEY-----\n").replace("-----ENDPRIVATEKEY-----", "\n-----END PRIVATE KEY-----").replace(" ", "\n")
-        # Phục hồi định dạng chuẩn cho đầu và cuối file
-        clean_key = clean_key.replace("-----BEGIN\nPRIVATE\nKEY-----", "-----BEGIN PRIVATE KEY-----").replace("-----END\nPRIVATE\nKEY-----", "-----END PRIVATE KEY-----")
+        # 2. XỬ LÝ CHUỖI PRIVATE_KEY (Cực kỳ quan trọng)
+        raw_key = creds_dict["private_key"]
         
-        creds_dict["private_key"] = clean_key.strip()
+        # Loại bỏ các ký tự xuống dòng bị lặp lại hoặc khoảng trắng lạ
+        # Bước này giải quyết lỗi "Invalid base64-encoded string"
+        lines = raw_key.split('\n')
+        clean_lines = []
+        for line in lines:
+            line = line.strip()
+            if line:
+                clean_lines.append(line)
         
+        # Ghép lại với ký tự xuống dòng chuẩn \n
+        fixed_key = "\n".join(clean_lines)
+        
+        # Đảm bảo có đúng cấu trúc đầu cuối
+        if "-----BEGIN PRIVATE KEY-----" not in fixed_key:
+            fixed_key = "-----BEGIN PRIVATE KEY-----\n" + fixed_key
+        if "-----END PRIVATE KEY-----" not in fixed_key:
+            fixed_key = fixed_key + "\n-----END PRIVATE KEY-----"
+            
+        creds_dict["private_key"] = fixed_key
+        
+        # 3. Nạp vào thư viện Google
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
+        
     except Exception as e:
         st.error(f"❌ Lỗi nạp bảo mật: {str(e)}")
         return None
+
+# --- TRIỂN KHAI TIẾP THEO ---
+client = get_gsheet_client()
+if client:
+    st.success("✅ Tuyệt vời sếp ơi! Hệ thống đã thông qua lớp bảo mật.")
+    # Tiếp tục logic đọc Sheet ở đây...
 
 # --- TRIỂN KHAI GIAO DIỆN ---
 client = get_gsheet_client()
