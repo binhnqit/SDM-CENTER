@@ -7,15 +7,20 @@ def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
     if "gcp_service_account" not in st.secrets:
-        st.error("❌ Không tìm thấy [gcp_service_account] trong Secrets!")
+        st.error("❌ Không tìm thấy Secrets!")
         return None
         
     try:
-        # Lấy dict từ Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Làm sạch khóa private_key khỏi các khoảng trắng thừa
-        creds_dict["private_key"] = creds_dict["private_key"].strip()
+        # Xử lý triệt để các ký tự xuống dòng lạ và khoảng trắng
+        key = creds_dict["private_key"]
+        # Loại bỏ các dấu cách nằm giữa chuỗi và các ký tự điều hướng lạ
+        clean_key = key.replace("\\n", "\n").replace(" ", "").replace("\n", " ").replace("-----BEGINPRIVATEKEY-----", "-----BEGIN PRIVATE KEY-----\n").replace("-----ENDPRIVATEKEY-----", "\n-----END PRIVATE KEY-----").replace(" ", "\n")
+        # Phục hồi định dạng chuẩn cho đầu và cuối file
+        clean_key = clean_key.replace("-----BEGIN\nPRIVATE\nKEY-----", "-----BEGIN PRIVATE KEY-----").replace("-----END\nPRIVATE\nKEY-----", "-----END PRIVATE KEY-----")
+        
+        creds_dict["private_key"] = clean_key.strip()
         
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds)
