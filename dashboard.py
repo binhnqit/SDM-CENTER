@@ -4,24 +4,14 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 
-# 1. Kết nối trực tiếp (Quét sạch mọi loại Key trong Secrets)
+# 1. Kết nối (Quét sạch Secrets)
 def get_client():
     try:
-        # Tự động tìm key bất kể sếp đặt tên biến là gì
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
-        if not k_name:
-            st.error("❌ Không tìm thấy biến Key trong Secrets!")
-            return None
-        
         info = json.loads(base64.b64decode(st.secrets[k_name]).decode())
-        creds = Credentials.from_service_account_info(
-            info, 
-            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        )
+        creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
         return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"❌ Lỗi xác thực Key: {str(e)}")
-        return None
+    except: return None
 
 st.set_page_config(page_title="4Oranges SDM", layout="wide")
 st.title("🛡️ 4Oranges SDM - AI Command Center")
@@ -30,41 +20,32 @@ client = get_client()
 
 if client:
     try:
-        # ID Sheet lấy trực tiếp từ URL sếp gửi
+        # ID Sheet lấy từ link sếp gửi
         SPREADSHEET_ID = "1Rb0o4_waLhyj-CGEpnF-VdA7s9kykCxSKD2K85Rx-DJwLhUDd-R81lvFcPw1fzZTz2n7Dip0c3kkfH"
-        
-        # Mở bằng ID để tránh lỗi định dạng URL
         sh = client.open_by_key(SPREADSHEET_ID)
-        worksheet = sh.get_worksheet(0) # Mở tab đầu tiên
+        worksheet = sh.get_worksheet(0)
         
-        # LẤY DỮ LIỆU
-        all_values = worksheet.get_all_values()
+        # LẤY DỮ LIỆU DẠNG MẢNG ĐƠN GIẢN NHẤT
+        data = worksheet.get_all_values()
         
-        if all_values:
-            st.success("✅ HỆ THỐNG ĐÃ THÔNG SUỐT!")
+        if data:
+            st.success("✅ KẾT NỐI THÀNH CÔNG")
             
-            # Dashboard Widget
-            if len(all_values) > 1:
-                row2 = all_values[1]
-                c1, c2, c3 = st.columns(3)
-                c1.metric("THIẾT BỊ", row2[0] if len(row2) > 0 else "---")
-                c2.metric("TRẠNG THÁI", row2[1] if len(row2) > 1 else "---")
-                c3.metric("LỆNH", row2[2] if len(row2) > 2 else "---")
+            # CHỈ HIỂN THỊ DỮ LIỆU THÔ - KHÔNG XỬ LÝ
+            # Sếp sẽ thấy y hệt như trên Google Sheet
+            for row in data:
+                # Tạo các cột nhỏ để hiển thị dữ liệu từng dòng
+                cols = st.columns(len(row))
+                for i, cell_value in enumerate(row):
+                    cols[i].write(f"**{cell_value}**" if data.index(row) == 0 else cell_value)
             
-            st.divider()
-            
-            # Hiển thị bảng 1:1 như Google Sheet
-            st.write("### 📑 Bảng dữ liệu thực tế")
-            st.table(all_values)
-            
+            if st.button("🔄 Cập nhật"):
+                st.rerun()
         else:
-            st.warning("⚠️ Sheet này hiện đang trống.")
+            st.warning("Sheet trống.")
             
-    except gspread.exceptions.APIError as e:
-        st.error(f"❌ Lỗi API Google: Có thể sếp chưa bật 'Google Sheets API' trong Google Cloud Console.")
-    except gspread.exceptions.SpreadsheetNotFound:
-        st.error("❌ Không tìm thấy file Sheet. Kiểm tra lại ID hoặc quyền chia sẻ.")
     except Exception as e:
-        st.error(f"❌ Lỗi không xác định: {str(e)}")
+        st.error(f"❌ Lỗi: {str(e)}")
+        st.info("Hãy chắc chắn sếp đã Share quyền Editor cho email Service Account.")
 else:
-    st.info("💡 Mẹo: Hãy đảm bảo sếp đã dán đúng chuỗi Base64 vào Secrets.")
+    st.error("❌ Kiểm tra lại Secrets (Base64).")
