@@ -1,25 +1,25 @@
-import time
-import requests
+import fdb # Thư viện đọc file .fdb
+import pandas as pd
 import os
-import uuid
 
-# Lấy ID duy nhất của phần cứng
-def get_hwid():
-    return str(uuid.getnode())
+def get_tinting_history():
+    # Đường dẫn mặc định của file History trên máy khách
+    db_path = r'C:\ProgramData\Fast and Fluid Management\PrismaPro\History.fdb'
+    
+    if not os.path.exists(db_path):
+        return None
 
-def check_for_commands():
-    # Giả lập đọc lệnh từ Google Sheet/Server
-    # Nếu lệnh là "Update_v12" -> Tải file từ GitHub đẩy vào thư mục C:\ProgramData\...
-    # Nếu lệnh là "Lock" -> Khóa máy
-    pass
-
-def heartbeat():
-    print(f"[{get_hwid()}] Đang báo cáo trạng thái Online...")
-    # Gửi tín hiệu về Database
-
-if __name__ == "__main__":
-    print("Agent SDM đang khởi động...")
-    while True:
-        heartbeat()
-        check_for_commands()
-        time.sleep(60) # Gửi tín hiệu mỗi 1 phút
+    try:
+        # Kết nối vào database Firebird
+        conn = fdb.connect(
+            database=db_path,
+            user='SYSDBA',      # User mặc định của Firebird
+            password='masterkey' # Password mặc định
+        )
+        query = "SELECT FIRST 10 * FROM TINTING_HISTORY ORDER BY DATE_TIME DESC"
+        df = pd.read_sql(query, conn)
+        conn.close()
+        return df
+    except Exception as e:
+        print(f"Lỗi đọc DB: {e}")
+        return None
