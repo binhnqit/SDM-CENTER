@@ -4,57 +4,65 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 import pandas as pd
+from datetime import datetime
 
-st.set_page_config(page_title="4Oranges SDM - Final Fix", layout="wide")
+st.set_page_config(page_title="4Oranges SDM - AI Command Center", layout="wide")
+
+# --- KẾT NỐI HỆ THỐNG ---
+@st.cache_resource
+def get_gspread_client():
+    k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+    info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(info, scopes=scope)
+    return gspread.authorize(creds)
+
+client = get_gspread_client()
+SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI" # ID chuẩn sếp vừa fix
+sh = client.open_by_key(SHEET_ID)
+worksheet = sh.get_worksheet(0)
+
+# --- GIAO DIỆN CHÍNH ---
 st.title("🛡️ 4Oranges SDM - AI Command Center")
 
-# --- HÀM KẾT NỐI CHUẨN ---
-def start_connection():
-    try:
-        # 1. Giải mã Key
-        k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
-        info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
-        
-        # 2. Cấp quyền
-        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(info, scopes=scope)
-        client = gspread.authorize(creds)
-        
-        # 3. ID FILE GỐC (Trích xuất từ link sếp gửi)
-        # Link: https://docs.google.com/spreadsheets/d/1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI/edit?gid=0#gid=0
-        # ID CHUẨN LÀ CỤM DƯỚI ĐÂY:
-        SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI"
-        
-        # Mở bằng ID - Đây là cách an toàn nhất tránh lỗi 404
-        sh = client.open_by_key(SHEET_ID)
-        worksheet = sh.get_worksheet(0)
-        
-        # Đọc dữ liệu
-        data = worksheet.get_all_values()
-        return data, None
-    except Exception as e:
-        return None, str(e)
+# Load dữ liệu
+data = worksheet.get_all_records()
+df = pd.DataFrame(data)
 
-# Chạy lệnh
-data, err = start_connection()
+# Khu vực hiển thị Metrics
+c1, c2, c3 = st.columns(3)
+with c1: st.metric("MÁY PHA", df['MACHINE_ID'].iloc[0])
+with c2: st.metric("TRẠNG THÁI", df['STATUS'].iloc[0])
+with c3: st.metric("LẦN CUỐI THẤY", df['LAST_SEEN'].iloc[0])
 
-if data:
-    st.success("✅ KẾT NỐI THÀNH CÔNG - ĐÃ ĐỌC ĐƯỢC DỮ LIỆU!")
+st.divider()
+
+# --- KHU VỰC ĐIỀU KHIỂN (COMMAND) ---
+st.subheader("🎮 Bảng điều khiển lệnh")
+with st.container(border=True):
+    col_input, col_btn = st.columns([3, 1])
     
-    # Bước 2 sếp giao: In tên cột
-    headers = data[0]
-    st.write("### 📋 Các cột trong hệ thống:")
-    cols = st.columns(len(headers))
-    for i, h in enumerate(headers):
-        cols[i].info(f"**{h}**")
+    with col_input:
+        # Danh sách lệnh mẫu hoặc sếp tự nhập
+        cmd_input = st.selectbox("Chọn lệnh vận hành:", 
+                                ["NONE", "START_DISPENSING", "STOP_EMERGENCY", "CLEAN_SYSTEM", "UPDATE_FIRMWARE"])
     
-    # In bảng dữ liệu
-    st.write("### 📑 Bảng dữ liệu thực tế:")
-    df = pd.DataFrame(data[1:], columns=headers)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    if st.button("🔄 Làm mới"):
-        st.rerun()
-else:
-    st.error(f"❌ Vẫn vướng tại: {err}")
-    st.info("💡 Sếp lưu ý: ID file là chuỗi ký tự nằm giữa /d/ và /edit trong link trình duyệt của sếp.")
+    with col_btn:
+        st.write("##") # Căn lề nút
+        if st.button("🚀 GỬI LỆNH", use_container_width=True):
+            # Ghi lệnh vào dòng 2, cột 3 (Cột COMMAND)
+            worksheet.update_cell(2, 3, cmd_input)
+            # Cập nhật thời gian gửi lệnh vào cột 4
+            now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            worksheet.update_cell(2, 4, now)
+            
+            st.toast(f"Đã gửi lệnh: {cmd_input}", icon="✅")
+            st.rerun()
+
+# --- BẢNG DỮ LIỆU ---
+st.subheader("📑 Dữ liệu chi tiết từ hệ thống")
+st.dataframe(df, use_container_width=True, hide_index=True)
+
+if st.button("🔄 Làm mới dữ liệu"):
+    st.cache_data.clear()
+    st.rerun()
