@@ -9,24 +9,39 @@ from datetime import datetime
 st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_icon="🎨")
 
 def get_gsheet_client():
-    # Định nghĩa quyền truy cập
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
     try:
-        # Lấy JSON thô từ Secrets
-        if "gcp_json_raw" not in st.secrets:
-            st.error("❌ Thiếu 'gcp_json_raw' trong Secrets!")
-            return None
-            
-        # Chuyển chuỗi thành Dictionary
-        info = json.loads(st.secrets["gcp_json_raw"])
+        # 1. Lấy dữ liệu thô
+        raw_json_str = st.secrets["gcp_json_raw"]
+        info = json.loads(raw_json_str)
         
-        # Nạp trực tiếp từ bộ nhớ (Sửa lỗi Bit Stream & JWT Signature)
+        # 2. XỬ LÝ LỖI PADDING CHO PRIVATE KEY
+        key = info.get("private_key", "")
+        if key:
+            # Tách phần Header và Footer của RSA
+            header = "-----BEGIN PRIVATE KEY-----"
+            footer = "-----END PRIVATE KEY-----"
+            
+            if header in key and footer in key:
+                # Trích xuất phần lõi Base64
+                core = key.split(header)[1].split(footer)[0]
+                # Xóa sạch mọi ký tự lạ (khoảng trắng, xuống dòng)
+                clean_core = re.sub(r'\s+', '', core)
+                
+                # --- THUẬT TOÁN BÙ PADDING ---
+                # Base64 phải có độ dài chia hết cho 4
+                missing_padding = len(clean_core) % 4
+                if missing_padding:
+                    clean_core += "=" * (4 - missing_padding)
+                
+                # Ghép lại khóa hoàn chỉnh
+                info["private_key"] = f"{header}\n{clean_core}\n{footer}"
+
+        # 3. Nạp vào hệ thống
         creds = Credentials.from_service_account_info(info, scopes=scopes)
         return gspread.authorize(creds)
+        
     except Exception as e:
         st.error(f"❌ Lỗi mổ xẻ hệ thống: {str(e)}")
         return None
