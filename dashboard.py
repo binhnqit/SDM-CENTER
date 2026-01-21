@@ -5,33 +5,32 @@ import gspread
 import json
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+from google.oauth2.service_account import Credentials
 import os  # Đã thêm để sửa lỗi NameError: name 'os' is not defined
 
 # --- 1. CẤU HÌNH HỆ THỐNG ---
 st.set_page_config(page_title="4Oranges AI Command Center", layout="wide", page_icon="🎨")
 
-def get_gsheet_client():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+ def get_gsheet_client():
+    # 1. Định nghĩa quyền truy cập
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
     
-    if "gcp_json_raw" not in st.secrets:
-        st.error("❌ Thiếu biến 'gcp_json_raw' trong Secrets!")
-        return None
-        
     try:
-        # Lấy chuỗi từ Secrets và dọn dẹp các khoảng trắng thừa đầu/cuối
-        json_str = st.secrets["gcp_json_raw"].strip()
+        # 2. Lấy chuỗi JSON thô từ Secrets
+        # Tư duy mới: Xem nó như một biến dữ liệu, không phải một file
+        raw_json = st.secrets["gcp_json_raw"]
+        info = json.loads(raw_json)
         
-        # Nạp Dictionary từ JSON
-        creds_info = json.loads(json_str)
+        # 3. Nạp thẳng từ Dictionary vào bộ nhớ (Không thông qua file)
+        # Hàm 'from_service_account_info' là chìa khóa để diệt lỗi 'bit stream'
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
         
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         return gspread.authorize(creds)
-    except json.JSONDecodeError as e:
-        st.error(f"❌ Lỗi định dạng JSON trong Secrets: {str(e)}")
-        st.info("Sếp hãy kiểm tra xem có dán thiếu dấu ngoặc kép hoặc dấu phẩy không.")
-        return None
     except Exception as e:
-        st.error(f"❌ Lỗi xác thực JWT: {str(e)}")
+        st.error(f"❌ Lỗi mổ xẻ hệ thống: {str(e)}")
         return None
 # --- Khởi chạy Dashboard ---
 client = get_gsheet_client()
