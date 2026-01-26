@@ -145,13 +145,29 @@ with t_file:
                 st.success(f"✅ Đã đẩy {len(chunks)} mảnh dữ liệu lên hàng đợi!")
                 st.balloons()
 
-# --- TAB 3: LỊCH SỬ ---
+# -- TAB 3: LỊCH SỬ & DỌN DẸP ---
 with t_log:
     st.subheader("📜 Nhật ký truyền tải")
-    logs = ws_formula.get_all_values()
-    if len(logs) > 1:
-        ldf = pd.DataFrame(logs[1:], columns=logs[0])
+    
+    # Lấy dữ liệu mới nhất
+    logs_data = ws_formula.get_all_values()
+    if len(logs_data) > 1:
+        ldf = pd.DataFrame(logs_data[1:], columns=logs_data[0])
+        
+        # Nút dọn dẹp để sếp bấm khi muốn xóa hết hàng đợi
+        if st.button("🗑️ XÓA TOÀN BỘ LỊCH SỬ (Dọn sạch hàng đợi)", type="secondary"):
+            # Giữ lại hàng tiêu đề, xóa toàn bộ nội dung dưới
+            ws_formula.resize(rows=1) 
+            ws_formula.resize(rows=2000)
+            ws_formula.update('A1:G1', [EXPECTED_HEADERS])
+            st.success("Đã dọn sạch hàng đợi truyền file!")
+            time.sleep(1)
+            st.rerun()
+
+        st.divider()
         st.dataframe(ldf[['MACHINE_ID', 'FILE_NAME', 'TIMESTAMP', 'PART_INFO', 'STATUS']].tail(50), use_container_width=True, hide_index=True)
+    else:
+        st.info("Hàng đợi đang trống. Sẵn sàng cho file mới.")
 
 # --- TAB 4: PHÂN TÍCH ---
 with t_chart:
