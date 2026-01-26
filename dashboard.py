@@ -5,106 +5,140 @@ import base64
 from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
+import time
 import io
 
-st.set_page_config(page_title="4Oranges SDM - Control Center", layout="wide")
+# --- 1. CẤU HÌNH TRANG & GIAO DIỆN ---
+st.set_page_config(page_title="4Oranges SDM - AI Command Center", layout="wide", initial_sidebar_state="collapsed")
 
-# --- KẾT NỐI HỆ THỐNG ---
-@st.cache_resource
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #ff4b4b; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .status-online { color: #28a745; font-weight: bold; font-size: 0.9em; }
+    .status-offline { color: #dc3545; font-weight: bold; font-size: 0.9em; }
+    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. KẾT NỐI HỆ THỐNG ---
+@st.cache_resource(ttl=60) # Tần suất cập nhật nhanh hơn cho real-time
 def get_gspread_client():
-    k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
-    info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(info, scopes=scope)
-    return gspread.authorize(creds)
+    try:
+        k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+        info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(info, scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Lỗi kết nối Google: {e}")
+        return None
 
 client = get_gspread_client()
 SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI" 
 sh = client.open_by_key(SHEET_ID)
 worksheet = sh.get_worksheet(0)
 
-# --- XỬ LÝ DỮ LIỆU ---
-all_values = worksheet.get_all_values()
-headers = all_values[0]
-data_rows = all_values[1:]
+# --- 3. XỬ LÝ DỮ LIỆU ---
+def load_and_process():
+    all_values = worksheet.get_all_values()
+    if not all_values: return pd.DataFrame()
+    
+    df = pd.DataFrame(all_values[1:], columns=all_values[0])
+    df = df[df['MACHINE_ID'].str.strip() != ""].copy()
+    df['sheet_row'] = df.index + 2
+    
+    # Logic kiểm tra trạng thái Online thực tế (trễ < 2 phút)
+    now = datetime.now()
+    def check_alive(last_seen_str):
+        try:
+            ls = datetime.strptime(last_seen_str, "%d/%m/%Y %H:%M:%S")
+            diff = (now - ls).total_seconds()
+            return "ONLINE" if diff < 120 else "OFFLINE"
+        except: return "OFFLINE"
+    
+    df['ACTUAL_STATUS'] = df['LAST_SEEN'].apply(check_alive)
+    return df
 
-df = pd.DataFrame(data_rows, columns=headers)
-df = df[df['MACHINE_ID'].str.strip() != ""].copy()
-df['index_original'] = df.index
-df['sheet_row'] = df['index_original'] + 2
+df_full = load_and_process()
 
-# Phân loại trạng thái (Dựa trên cột STATUS gửi từ Agent)
-df['IS_ONLINE'] = df['STATUS'].str.upper().str.contains('ONLINE')
-
-# --- GIAO DIỆN CHÍNH ---
+# --- 4. GIAO DIỆN COMMAND CENTER ---
 st.title("🛡️ 4Oranges SDM - AI Command Center")
 
-# --- KHU VỰC THỐNG KÊ NHANH ---
-c1, c2, c3, c4 = st.columns(4)
-df_online = df[df['IS_ONLINE']]
-df_offline = df[~df['IS_ONLINE']]
+# Metrics Tổng quát
+df_on = df_full[df_full['ACTUAL_STATUS'] == 'ONLINE']
+df_off = df_full[df_full['ACTUAL_STATUS'] == 'OFFLINE']
 
-c1.metric("TỔNG MÁY", len(df))
-c2.metric("ĐANG ONLINE", len(df_online))
-c3.metric("MẤT KẾT NỐI", len(df_offline))
-
-# Tính năng Tải báo cáo toàn bộ
-with c4:
-    st.write("##")
-    csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(
-        label="📥 TẢI BÁO CÁO (CSV)",
-        data=csv,
-        file_name=f'SDM_Report_{datetime.now().strftime("%d%m_%H%M")}.csv',
-        mime='text/csv',
-        use_container_width=True
-    )
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("TỔNG MÁY", len(df_full))
+m2.metric("ĐANG TRỰC TUYẾN", len(df_on), delta=f"{len(df_on)} Active")
+m3.metric("MẤT KẾT NỐI", len(df_off), delta=f"-{len(df_off)}", delta_color="inverse")
+m4.metric("LỆNH CHỜ", len(df_full[df_full['COMMAND'] != 'NONE']))
 
 st.divider()
 
-# --- TRUNG TÂM PHÁT LỆNH ---
-with st.expander("🎮 TRUNG TÂM ĐIỀU KHIỂN (Chọn máy để gửi lệnh)", expanded=True):
-    col_target, col_cmd, col_btn = st.columns([2, 2, 1])
-    with col_target:
-        # Chỉ hiển thị máy Online để phát lệnh cho hiệu quả
-        online_list = df_online['MACHINE_ID'].tolist()
-        selected_machine = st.selectbox("🎯 Chọn máy mục tiêu (Chỉ hiện máy Online):", online_list if online_list else ["Không có máy online"])
-    with col_cmd:
-        cmd_options = ["NONE", "LOCK", "UNLOCK", "START_DISPENSING", "STOP_EMERGENCY"]
-        selected_cmd = st.selectbox("📜 Lệnh vận hành:", cmd_options)
-    with col_btn:
+# --- 5. TRUNG TÂM PHÁT LỆNH ---
+st.subheader("🎮 Điều khiển thiết bị")
+with st.container(border=True):
+    c_target, c_cmd, c_btn = st.columns([2, 2, 1])
+    with c_target:
+        # Chỉ cho phép chọn máy đang ONLINE để đảm bảo lệnh thực thi ngay
+        target_list = df_on['MACHINE_ID'].unique().tolist()
+        selected_machine = st.selectbox("🎯 Chọn máy (Chỉ hiện máy Online):", 
+                                        target_list if target_list else ["Không có máy online"])
+    with c_cmd:
+        selected_cmd = st.selectbox("📜 Lệnh vận hành:", ["NONE", "LOCK", "UNLOCK", "FORCE_UPDATE", "COLLECT_LOGS"])
+    with c_btn:
         st.write("##")
-        if st.button("🚀 GỬI LỆNH", use_container_width=True, type="primary") and online_list:
-            row_in_sheet = df[df['MACHINE_ID'] == selected_machine]['sheet_row'].iloc[0]
-            now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            worksheet.update_cell(int(row_in_sheet), 3, selected_cmd)
-            worksheet.update_cell(int(row_in_sheet), 4, now)
-            st.success(f"Đã gửi {selected_cmd}!")
+        if st.button("🚀 GỬI LỆNH NGAY", use_container_width=True, type="primary") and target_list:
+            row_idx = df_full[df_full['MACHINE_ID'] == selected_machine]['sheet_row'].iloc[0]
+            worksheet.update_cell(int(row_idx), 3, selected_cmd)
+            st.toast(f"Đã gửi {selected_cmd} tới {selected_machine}", icon="✅")
+            time.sleep(1)
             st.rerun()
 
-# --- PHÂN TÁCH DANH SÁCH (TÌM KIẾM & LỌC) ---
-st.subheader("📑 Quản lý Chi tiết")
+# --- 6. TÌM KIẾM & QUẢN LÝ DANH SÁCH ---
+st.subheader("📑 Danh sách Chi tiết & Báo cáo")
 
-tab1, tab2 = st.tabs(["🟢 MÁY ĐANG HOẠT ĐỘNG", "🔴 MÁY MẤT KẾT NỐI (CẦN KIỂM TRA)"])
+# Thanh công cụ: Tìm kiếm và Tải báo cáo
+tool_1, tool_2 = st.columns([3, 1])
+with tool_1:
+    search_query = st.text_input("🔍 Tìm kiếm tên máy hoặc IP...", placeholder="Nhập MACHINE_ID để lọc...")
+with tool_2:
+    st.write("##")
+    # Xuất báo cáo CSV
+    buffer = io.BytesIO()
+    df_full.to_csv(buffer, index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="📥 TẢI BÁO CÁO TOÀN BỘ",
+        data=buffer.getvalue(),
+        file_name=f"SDM_Report_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
 
-with tab1:
-    search_online = st.text_input("🔍 Tìm nhanh máy Online (Nhập tên máy...):", key="search_on")
-    if search_online:
-        df_on_display = df_online[df_online['MACHINE_ID'].str.contains(search_online, case=False)]
-    else:
-        df_on_display = df_online
+# Tách Tab Online/Offline
+tab_on, tab_off = st.tabs([f"🟢 ONLINE ({len(df_on)})", f"🔴 OFFLINE ({len(df_off)})"])
+
+def display_styled_df(target_df):
+    if search_query:
+        target_df = target_df[target_df['MACHINE_ID'].str.contains(search_query, case=False)]
     
-    st.dataframe(df_on_display[['MACHINE_ID', 'STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']], use_container_width=True, hide_index=True)
+    st.dataframe(
+        target_df[['MACHINE_ID', 'ACTUAL_STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']],
+        use_container_width=True, hide_index=True
+    )
 
-with tab2:
-    st.warning("Danh sách các máy đã lâu không có tín hiệu phản hồi về hệ thống.")
-    search_offline = st.text_input("🔍 Tìm nhanh máy Offline:", key="search_off")
-    if search_offline:
-        df_off_display = df_offline[df_offline['MACHINE_ID'].str.contains(search_offline, case=False)]
-    else:
-        df_off_display = df_offline
-        
-    st.dataframe(df_off_display[['MACHINE_ID', 'STATUS', 'LAST_SEEN', 'HISTORY']], use_container_width=True, hide_index=True)
+with tab_on:
+    display_styled_df(df_on)
 
-if st.button("🔄 Refresh Data"):
-    st.rerun()
+with tab_off:
+    st.info("Những máy này đã lâu không gửi tín hiệu (Heartbeat) về Cloud.")
+    display_styled_df(df_off)
+
+# Side bar
+with st.sidebar:
+    st.image("https://4oranges.com/wp-content/uploads/2021/08/logo-4oranges.png", width=150)
+    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.rerun()
