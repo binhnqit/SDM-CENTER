@@ -11,7 +11,7 @@ import re
 import zlib
 
 # --- 1. CẤU HÌNH ---
-st.set_page_config(page_title="4Oranges SDM - Multi-Block System", layout="wide")
+st.set_page_config(page_title="4Oranges SDM - V8.7 Stable", layout="wide")
 
 @st.cache_resource(ttl=60)
 def get_gspread_client():
@@ -29,31 +29,42 @@ SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI"
 sh = client.open_by_key(SHEET_ID)
 worksheet = sh.get_worksheet(0)
 
+# Định nghĩa cấu trúc chuẩn 7 cột
+EXPECTED_HEADERS = ["MACHINE_ID", "FILE_NAME", "DATA_CHUNK", "TARGET_PATH", "TIMESTAMP", "PART_INFO", "STATUS"]
+
 try:
     ws_formula = sh.worksheet("Formulas")
+    # Kiểm tra nếu tiêu đề cũ không khớp thì xóa đi tạo lại để tránh lỗi GSpreadException
+    current_headers = ws_formula.row_values(1)
+    if not current_headers or current_headers[0] != EXPECTED_HEADERS[0]:
+        sh.del_worksheet(ws_formula)
+        raise Exception("Reset Sheet")
 except:
     ws_formula = sh.add_worksheet("Formulas", rows=2000, cols=7)
-    # Thêm cột PART_INFO để Agent biết thứ tự ghép file
-    ws_formula.append_row(["MACHINE_ID", "FILE_NAME", "DATA_CHUNK", "TARGET_PATH", "TIMESTAMP", "PART_INFO", "STATUS"])
+    ws_formula.append_row(EXPECTED_HEADERS)
 
-# --- 2. LOAD DỮ LIỆU MÁY ---
+# --- 2. HÀM LOAD DỮ LIỆU ---
 def load_data():
     data = worksheet.get_all_values()
     if not data or len(data) < 2: return pd.DataFrame()
     df = pd.DataFrame(data[1:], columns=data[0])
     now = datetime.now()
-    df['ACTUAL_STATUS'] = df['LAST_SEEN'].apply(lambda x: "ONLINE" if x and (now - datetime.strptime(x, "%d/%m/%Y %H:%M:%S")).total_seconds() < 120 else "OFFLINE")
+    def parse_time(x):
+        try: return datetime.strptime(x, "%d/%m/%Y %H:%M:%S")
+        except: return None
+        
+    df['ACTUAL_STATUS'] = df['LAST_SEEN'].apply(lambda x: "ONLINE" if parse_time(x) and (now - parse_time(x)).total_seconds() < 120 else "OFFLINE")
     return df
 
 df = load_data()
 
 # --- 3. GIAO DIỆN ---
-st.title("🛡️ 4Oranges SDM - V8.6 Multi-Block Update")
+st.title("🛡️ 4Oranges SDM - V8.7 Stable Command")
 
-tab_control, tab_formula = st.tabs(["🎮 ĐIỀU KHIỂN", "🧪 PRISMAPRO UPDATE (FILE LỚN)"])
+tab_control, tab_formula = st.tabs(["🎮 ĐIỀU KHIỂN", "🧪 PRISMAPRO UPDATE"])
 
 with tab_control:
-    st.dataframe(df[['MACHINE_ID', 'ACTUAL_STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']], use_container_width=True)
+    st.dataframe(df[['MACHINE_ID', 'ACTUAL_STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']], use_container_width=True, hide_index=True)
 
 with tab_formula:
     st.subheader("🧬 Truyền tải File .sdf dung lượng lớn")
@@ -62,43 +73,41 @@ with tab_formula:
     with st.container(border=True):
         f_col1, f_col2 = st.columns([1, 1])
         with f_col1:
-            uploaded_file = st.file_uploader("📂 Chọn file .sdf (Hỗ trợ file nặng):", type=['sdf'])
+            uploaded_file = st.file_uploader("📂 Chọn file .sdf:", type=['sdf'], key="sdf_v87")
+            chunks = []
             if uploaded_file:
-                # Nén và chuyển sang Base64
                 raw_data = uploaded_file.getvalue()
+                # Nén dữ liệu
                 compressed = base64.b64encode(zlib.compress(raw_data)).decode('utf-8')
-                
-                # Chia nhỏ chunk (Mỗi chunk 40,000 ký tự cho an toàn tuyệt đối)
-                chunk_size = 40000
+                # Chia nhỏ mỗi chunk 30,000 ký tự (mức cực kỳ an toàn cho Google API)
+                chunk_size = 30000
                 chunks = [compressed[i:i+chunk_size] for i in range(0, len(compressed), chunk_size)]
-                st.info(f"📦 File gốc: {len(raw_data)/1024:.1f} KB. Sau khi nén: {len(chunks)} phần.")
+                st.info(f"📦 File: {uploaded_file.name} | Chia làm: {len(chunks)} phần.")
         
         with f_col2:
             target_machines = st.multiselect("🎯 Chọn máy nhận:", df['MACHINE_ID'].unique() if not df.empty else [])
-            if st.button("🚀 ĐẨY FILE NGAY", use_container_width=True, type="primary"):
+            if st.button("🚀 ĐẨY FILE", use_container_width=True, type="primary"):
                 if uploaded_file and target_machines:
                     ts = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                     total_parts = len(chunks)
+                    all_rows = []
+                    for m_id in target_machines:
+                        for idx, chunk in enumerate(chunks):
+                            all_rows.append([m_id, uploaded_file.name, chunk, PRISMA_PATH, ts, f"PART_{idx+1}/{total_parts}", "PENDING"])
                     
-                    with st.spinner(f"Đang truyền {total_parts} phần dữ liệu..."):
-                        all_rows = []
-                        for m_id in target_machines:
-                            for idx, chunk in enumerate(chunks):
-                                # Cấu trúc: [ID, Tên file, Dữ liệu nhỏ, Đường dẫn, Giờ, Phần x/y, Trạng thái]
-                                part_info = f"PART_{idx+1}_OF_{total_parts}"
-                                all_rows.append([m_id, uploaded_file.name, chunk, PRISMA_PATH, ts, part_info, "PENDING"])
-                        
-                        # Gửi hàng loạt để tăng tốc
+                    try:
                         ws_formula.append_rows(all_rows)
-                    
-                    st.success(f"✅ Đã đẩy thành công file {uploaded_file.name}!")
-                    st.balloons()
+                        st.success(f"✅ Đã gửi {len(all_rows)} block dữ liệu thành công!")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"Lỗi khi lưu vào Sheet: {e}")
                 else:
-                    st.error("Vui lòng chọn file và máy!")
+                    st.error("Vui lòng chọn đầy đủ File và Máy!")
 
-# Hiển thị trạng thái các phần đang chờ
-if st.checkbox("Xem tiến độ truyền tải"):
-    st.write("### Trạng thái các Block dữ liệu trên Cloud")
-    formula_data = ws_formula.get_all_records()
-    if formula_data:
-        st.dataframe(pd.DataFrame(formula_data).tail(10), use_container_width=True)
+    # Cách lấy nhật ký an toàn hơn get_all_records()
+    if st.checkbox("Xem nhật ký truyền tải"):
+        st.write("### 50 hàng dữ liệu cuối cùng")
+        raw_logs = ws_formula.get_all_values()
+        if len(raw_logs) > 1:
+            log_df = pd.DataFrame(raw_logs[1:], columns=raw_logs[0]).tail(50)
+            st.dataframe(log_df, use_container_width=True)
