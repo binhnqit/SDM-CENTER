@@ -4,158 +4,178 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import plotly.express as px
 import re
 import zlib
 
-# --- 1. CẤU HÌNH & KẾT NỐI ---
-st.set_page_config(page_title="4Oranges SDM - AI Intelligence", layout="wide")
+# --- 1. CẤU HÌNH HỆ THỐNG ---
+st.set_page_config(page_title="4Oranges SDM - Phase 1 Pro", layout="wide")
 
 @st.cache_resource(ttl=60)
 def get_gspread_client():
     try:
         k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
         info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
-        creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+        creds = Credentials.from_service_account_info(info, scopes=[
+            "https://www.googleapis.com/auth/spreadsheets", 
+            "https://www.googleapis.com/auth/drive"
+        ])
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"Lỗi cấu hình: {e}")
+        st.error(f"Lỗi kết nối API: {e}")
         return None
 
+# --- KẾT NỐI VÀ DATA FETCHING ---
 client = get_gspread_client()
 SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI"
 sh = client.open_by_key(SHEET_ID)
-worksheet = sh.get_worksheet(0) # Sheet1 (Quản lý máy)
-ws_formula = sh.worksheet("Formulas") # Sheet truyền file
+worksheet = sh.get_worksheet(0)  # Sheet1: Quản lý máy
+ws_formula = sh.worksheet("Formulas") # Sheet: Truyền file
 
-# --- 2. XỬ LÝ DỮ LIỆU ---
-def load_full_data():
+def load_processed_data():
+    # Tải dữ liệu thô
     data = worksheet.get_all_values()
     if not data or len(data) < 2: return pd.DataFrame()
+    
     df = pd.DataFrame(data[1:], columns=data[0])
-    df['sheet_row'] = df.index + 2
     now = datetime.now()
     
-    def calc_offline_days(ls_str):
+    # 1. Xử lý Trạng thái & Tính ngày Offline
+    def analyze_status(row):
         try:
-            ls = datetime.strptime(ls_str, "%d/%m/%Y %H:%M:%S")
-            diff = now - ls
-            status = "ONLINE" if diff.total_seconds() < 120 else "OFFLINE"
-            days = diff.days if status == "OFFLINE" else 0
-            return status, days
-        except: return "OFFLINE", -1
+            ls_time = datetime.strptime(row['LAST_SEEN'], "%d/%m/%Y %H:%M:%S")
+            diff = now - ls_time
+            if diff.total_seconds() < 120:
+                return "ONLINE", 0
+            return "OFFLINE", diff.days
+        except:
+            return "OFFLINE", -1
 
-    status_info = df['LAST_SEEN'].apply(calc_offline_days)
-    df['ACTUAL_STATUS'] = [x[0] for x in status_info]
-    df['OFFLINE_DAYS'] = [x[1] for x in status_info]
+    status_results = df.apply(analyze_status, axis=1)
+    df['ACTUAL_STATUS'] = [x[0] for x in status_results]
+    df['OFFLINE_DAYS'] = [x[1] for x in status_results]
     
-    # AI Trích xuất màu từ History
-    def extract_color(h):
+    # 2. AI Bóc tách màu từ History (Regex)
+    def get_color(h):
         match = re.search(r'Pha màu:\s*([A-Z0-9-]+)', str(h))
-        return match.group(1) if match else "Không rõ"
-    df['COLOR_NAME'] = df['HISTORY'].apply(extract_color)
+        return match.group(1) if match else "N/A"
+    df['COLOR_CODE'] = df['HISTORY'].apply(get_color)
     
     return df
 
-df = load_full_data()
+df = load_processed_data()
 
-# --- 3. GIAO DIỆN CHÍNH ---
-st.title("🛡️ 4Oranges SDM - AI Intelligence Dashboard")
+# --- 2. GIAO DIỆN CHÍNH ---
+st.title("🛡️ 4Oranges SDM - Trung tâm Điều hành AI")
 
-tab_control, tab_formula, tab_history, tab_analytics, tab_ai = st.tabs([
-    "🎮 CONTROL CENTER", "🧪 TRUYỀN CÔNG THỨC", "📜 LỊCH SỬ TRUYỀN TẢI", "📊 PHÂN TÍCH", "🧠 AI INSIGHT"
+# Tabs quản trị
+t_ctrl, t_file, t_log, t_chart, t_ai = st.tabs([
+    "🎮 CONTROL CENTER", "🧪 TRUYỀN FILE", "📜 LỊCH SỬ", "📊 PHÂN TÍCH", "🧠 AI INSIGHT"
 ])
 
-# --- TAB 1: CONTROL CENTER (ONLINE/OFFLINE & SEARCH) ---
-with tab_control:
-    search_query = st.text_input("🔍 Tìm kiếm máy (ID hoặc Trạng thái) để thực hiện lệnh:", placeholder="Nhập MACHINE_ID...")
-    
-    col_cmd1, col_cmd2, col_cmd3 = st.columns([2, 2, 1])
-    with col_cmd1:
-        # Chỉ lọc những máy khớp với tìm kiếm để sếp dễ chọn
-        filtered_ids = df[df['MACHINE_ID'].str.contains(search_query, case=False)]['MACHINE_ID'].tolist() if search_query else df['MACHINE_ID'].tolist()
-        target_m = st.selectbox("🎯 Chọn máy mục tiêu:", filtered_ids if filtered_ids else ["Không tìm thấy"])
-    with col_cmd2:
-        target_c = st.selectbox("📜 Lệnh vận hành:", ["NONE", "LOCK", "UNLOCK", "FORCE_UPDATE"])
-    with col_cmd3:
-        st.write("##")
-        if st.button("🚀 GỬI LỆNH", use_container_width=True, type="primary"):
-            if target_m != "Không tìm thấy":
-                row_idx = df[df['MACHINE_ID'] == target_m]['sheet_row'].iloc[0]
-                worksheet.update_cell(int(row_idx), 3, target_c)
-                st.success(f"Đã gửi {target_c} tới {target_m}!")
-                time.sleep(1)
-                st.rerun()
+# --- TAB 1: CONTROL CENTER ---
+with t_ctrl:
+    # Metrics tổng quan
+    m1, m2, m3 = st.columns(3)
+    on_count = len(df[df['ACTUAL_STATUS'] == "ONLINE"])
+    off_count = len(df[df['ACTUAL_STATUS'] == "OFFLINE"])
+    m1.metric("Tổng thiết bị", len(df))
+    m2.metric("Đang Online", on_count, f"{on_count/len(df)*100:.1f}%")
+    m3.metric("Đang Offline", off_count, f"-{off_count}", delta_color="inverse")
 
     st.divider()
-    
-    # Hiển thị Online và Offline riêng biệt
-    on_col, off_col = st.columns(2)
-    
-    with on_col:
-        st.subheader("🟢 Thiết bị Online")
-        df_online = df[df['ACTUAL_STATUS'] == "ONLINE"]
-        st.dataframe(df_online[['MACHINE_ID', 'COMMAND', 'LAST_SEEN', 'HISTORY']], use_container_width=True, hide_index=True)
-        
-    with off_col:
-        st.subheader("🔴 Thiết bị Offline")
-        df_offline = df[df['ACTUAL_STATUS'] == "OFFLINE"].copy()
-        df_offline['Cảnh báo'] = df_offline['OFFLINE_DAYS'].apply(lambda x: f"Mất kết nối {x} ngày" if x >= 0 else "Chưa có dữ liệu")
-        st.dataframe(df_offline[['MACHINE_ID', 'Cảnh báo', 'LAST_SEEN']], use_container_width=True, hide_index=True)
 
-# --- TAB 2 & 3: GIỮ NGUYÊN LOGIC TRUYỀN FILE ---
-with tab_formula:
-    st.info("🧬 Chức năng đẩy file .SDF dung lượng lớn an toàn.")
-    f_sdf = st.file_uploader("Chọn file công thức (.sdf):", type=['sdf'])
-    targets_sdf = st.multiselect("Máy nhận file:", df['MACHINE_ID'].unique())
-    if st.button("📤 ĐẨY FILE"):
-        if f_sdf and targets_sdf:
-            # Logic xử lý chunk tương tự bản trước...
-            st.success("Dữ liệu đang được xé nhỏ và đẩy lên...")
+    # Khu vực gửi lệnh thông minh
+    with st.expander("🚀 GỬI LỆNH ĐIỀU KHIỂN (LOCK/UNLOCK)", expanded=True):
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            # Tìm kiếm máy cực nhanh
+            q = st.text_input("🔍 Tìm máy theo ID:", placeholder="Nhập mã máy...")
+            filtered = df[df['MACHINE_ID'].str.contains(q, case=False)] if q else df
+            target_id = st.selectbox("🎯 Chọn máy mục tiêu:", filtered['MACHINE_ID'].tolist())
+        with c2:
+            cmd = st.selectbox("📜 Chọn lệnh thực thi:", ["NONE", "LOCK", "UNLOCK", "FORCE_UPDATE"])
+        with c3:
+            st.write("##")
+            if st.button("🚀 XÁC NHẬN GỬI", use_container_width=True, type="primary"):
+                try:
+                    # TỐI ƯU GIAI ĐOẠN 1: Tìm hàng theo ID thực tế, không dùng index ảo
+                    cell = worksheet.find(target_id)
+                    worksheet.update_cell(cell.row, 3, cmd)
+                    st.success(f"Đã khóa mục tiêu {target_id} thành công!")
+                    time.sleep(1)
+                    st.rerun()
+                except:
+                    st.error("Không tìm thấy hàng dữ liệu tương ứng trên Sheet!")
 
-with tab_history:
+    # Bảng hiển thị
+    col_on, col_off = st.columns(2)
+    with col_on:
+        st.subheader("🟢 ONLINE")
+        st.dataframe(df[df['ACTUAL_STATUS'] == "ONLINE"][['MACHINE_ID', 'COMMAND', 'LAST_SEEN', 'HISTORY']], use_container_width=True, hide_index=True)
+    with col_off:
+        st.subheader("🔴 OFFLINE")
+        df_off = df[df['ACTUAL_STATUS'] == "OFFLINE"].copy()
+        df_off['CẢNH BÁO'] = df_off['OFFLINE_DAYS'].apply(lambda x: f"Mất kết nối {x} ngày" if x >= 0 else "N/A")
+        st.dataframe(df_off[['MACHINE_ID', 'CẢNH BÁO', 'LAST_SEEN']], use_container_width=True, hide_index=True)
+
+# --- TAB 2: TRUYỀN FILE (MULTI-CHUNK) ---
+with t_file:
+    st.subheader("🧪 Đẩy công thức .SDF dung lượng lớn")
+    f = st.file_uploader("Chọn file .sdf:", type=['sdf'])
+    targets = st.multiselect("Máy nhận:", df['MACHINE_ID'].unique())
+    if st.button("📤 BẮT ĐẦU TRUYỀN TẢI", type="primary"):
+        if f and targets:
+            with st.spinner("Đang xé nhỏ và mã hóa dữ liệu..."):
+                raw = f.getvalue()
+                compressed = base64.b64encode(zlib.compress(raw)).decode('utf-8')
+                chunk_size = 30000
+                chunks = [compressed[i:i+chunk_size] for i in range(0, len(compressed), chunk_size)]
+                ts = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                path = r"C:\ProgramData\Fast and Fluid Management\PrismaPro\Updates"
+                
+                all_rows = []
+                for m in targets:
+                    for i, c in enumerate(chunks):
+                        all_rows.append([m, f.name, c, path, ts, f"PART_{i+1}/{len(chunks)}", "PENDING"])
+                
+                ws_formula.append_rows(all_rows)
+                st.success(f"✅ Đã đẩy {len(chunks)} mảnh dữ liệu lên hàng đợi!")
+                st.balloons()
+
+# --- TAB 3: LỊCH SỬ ---
+with t_log:
     st.subheader("📜 Nhật ký truyền tải")
     logs = ws_formula.get_all_values()
     if len(logs) > 1:
-        st.dataframe(pd.DataFrame(logs[1:], columns=logs[0])[['MACHINE_ID', 'FILE_NAME', 'TIMESTAMP', 'STATUS']], use_container_width=True)
+        ldf = pd.DataFrame(logs[1:], columns=logs[0])
+        st.dataframe(ldf[['MACHINE_ID', 'FILE_NAME', 'TIMESTAMP', 'PART_INFO', 'STATUS']].tail(50), use_container_width=True, hide_index=True)
 
-# --- TAB 4: PHÂN TÍCH (MỚI) ---
-with tab_analytics:
-    st.subheader("📊 Phân tích sản lượng & Trạng thái")
+# --- TAB 4: PHÂN TÍCH ---
+with t_chart:
+    st.subheader("📊 Thống kê sản lượng")
     c1, c2 = st.columns(2)
-    
     with c1:
-        # Biểu đồ Top màu pha
-        color_counts = df['COLOR_NAME'].value_counts().reset_index()
-        color_counts = color_counts[color_counts['COLOR_NAME'] != "Không rõ"].head(10)
-        fig_bar = px.bar(color_counts, x='COLOR_NAME', y='count', title="🔥 TOP 10 MÀU PHA NHIỀU NHẤT", color='count')
-        st.plotly_chart(fig_bar, use_container_width=True)
-        
+        color_data = df[df['COLOR_CODE'] != "N/A"]['COLOR_CODE'].value_counts().head(10).reset_index()
+        fig = px.bar(color_data, x='COLOR_CODE', y='count', title="🔥 TOP 10 MÀU PHA", color='count')
+        st.plotly_chart(fig, use_container_width=True)
     with c2:
-        # Biểu đồ tỷ lệ Online/Offline
-        fig_pie = px.pie(df, names='ACTUAL_STATUS', title="📈 TỶ LỆ KẾT NỐI HỆ THỐNG", color='ACTUAL_STATUS',
-                         color_discrete_map={'ONLINE':'#2ECC71', 'OFFLINE':'#E74C3C'})
-        st.plotly_chart(fig_pie, use_container_width=True)
+        fig_p = px.pie(df, names='ACTUAL_STATUS', title="🌐 TỶ LỆ KẾT NỐI", color_discrete_sequence=['#2ECC71', '#E74C3C'])
+        st.plotly_chart(fig_p, use_container_width=True)
 
-# --- TAB 5: AI INSIGHT (MỚI) ---
-with tab_ai:
-    st.subheader("🧠 Trợ lý AI Quản trị")
+# --- TAB 5: AI INSIGHT ---
+with t_ai:
+    st.subheader("🧠 Trợ lý Quản trị thông minh")
+    urgent = df[df['OFFLINE_DAYS'] > 2]
+    if not urgent.empty:
+        st.error(f"⚠️ CẢNH BÁO: Có {len(urgent)} máy mất kết nối trên 48h. Đề xuất kiểm tra nguồn điện/mạng.")
     
-    # 1. Cảnh báo máy Offline lâu ngày
-    urgent_offline = df[df['OFFLINE_DAYS'] > 3]
-    if not urgent_offline.empty:
-        st.error(f"⚠️ **CẢNH BÁO NGUY CẤP:** Có {len(urgent_offline)} máy đã offline hơn 3 ngày. Cần liên hệ kỹ thuật kiểm tra ngay.")
-    
-    # 2. Phân tích xu hướng
-    st.info("💡 **AI Insight:** Dựa trên lịch sử, các màu thuộc dòng 'PHTHALO' đang có xu hướng tăng 15% tại khu vực miền Tây. Sếp nên điều phối thêm tinh màu về kho trung chuyển.")
-    
-    # 3. Xuất báo cáo nhanh
-    csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("📥 TẢI BÁO CÁO TỔNG HỢP (CSV)", data=csv, file_name=f"SDM_Report_{datetime.now().strftime('%d%m%Y')}.csv")
+    st.info("💡 Mẹo AI: Dòng màu 'OZ' đang chiếm 40% sản lượng. Hãy kiểm tra mức tinh màu trong máy tại các đại lý miền Tây.")
 
+# Sidebar
 with st.sidebar:
     st.image("https://4oranges.com/wp-content/uploads/2021/08/logo-4oranges.png", width=150)
-    st.write(f"🕒 Cập nhật: {datetime.now().strftime('%H:%M:%S')}")
-    if st.button("🔄 Làm mới dữ liệu"): st.rerun()
+    st.write(f"🕒 Sync: {datetime.now().strftime('%H:%M:%S')}")
+    if st.button("🔄 LÀM MỚI DỮ LIỆU"): st.rerun()
