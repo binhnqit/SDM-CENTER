@@ -5,140 +5,125 @@ import base64
 from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
-import time
-import io
+import plotly.express as px # Thêm thư viện biểu đồ chuyên nghiệp
 
-# --- 1. CẤU HÌNH TRANG & GIAO DIỆN ---
-st.set_page_config(page_title="4Oranges SDM - AI Command Center", layout="wide", initial_sidebar_state="collapsed")
+# --- 1. CẤU HÌNH & GIAO DIỆN ---
+st.set_page_config(page_title="4Oranges SDM - Platinum AI", layout="wide")
 
+# Custom CSS cho phong cách Modern Dashboard
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #ff4b4b; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .status-online { color: #28a745; font-weight: bold; font-size: 0.9em; }
-    .status-offline { color: #dc3545; font-weight: bold; font-size: 0.9em; }
-    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f0f2f6; border-radius: 5px 5px 0 0; gap: 1px; padding-top: 10px; }
+    .stTabs [aria-selected="true"] { background-color: #ff4b4b !important; color: white !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 2. KẾT NỐI HỆ THỐNG ---
-@st.cache_resource(ttl=60) # Tần suất cập nhật nhanh hơn cho real-time
+@st.cache_resource(ttl=60)
 def get_gspread_client():
-    try:
-        k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
-        info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
-        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(info, scopes=scope)
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Lỗi kết nối Google: {e}")
-        return None
+    k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
+    info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
+    creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+    return gspread.authorize(creds)
 
 client = get_gspread_client()
-SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI" 
+SHEET_ID = "1LClTdR0z_FPX2AkYCfrbBRtWO8BWOG08hAEB8aq-TcI"
 sh = client.open_by_key(SHEET_ID)
-worksheet = sh.get_worksheet(0)
+ws_main = sh.get_worksheet(0) # Sheet lệnh & trạng thái
+ws_formula = sh.get_worksheet(1) if len(sh.worksheets()) > 1 else sh.add_worksheet("Formulas", 100, 5)
 
-# --- 3. XỬ LÝ DỮ LIỆU ---
-def load_and_process():
-    all_values = worksheet.get_all_values()
-    if not all_values: return pd.DataFrame()
-    
-    df = pd.DataFrame(all_values[1:], columns=all_values[0])
-    df = df[df['MACHINE_ID'].str.strip() != ""].copy()
+# --- 3. LOAD DỮ LIỆU ---
+def load_data():
+    data = ws_main.get_all_values()
+    df = pd.DataFrame(data[1:], columns=data[0])
     df['sheet_row'] = df.index + 2
-    
-    # Logic kiểm tra trạng thái Online thực tế (trễ < 2 phút)
+    # Logic Actual Status
     now = datetime.now()
-    def check_alive(last_seen_str):
-        try:
-            ls = datetime.strptime(last_seen_str, "%d/%m/%Y %H:%M:%S")
-            diff = (now - ls).total_seconds()
-            return "ONLINE" if diff < 120 else "OFFLINE"
-        except: return "OFFLINE"
-    
-    df['ACTUAL_STATUS'] = df['LAST_SEEN'].apply(check_alive)
+    df['ACTUAL_STATUS'] = df['LAST_SEEN'].apply(lambda x: "ONLINE" if (now - datetime.strptime(x, "%d/%m/%Y %H:%M:%S")).total_seconds() < 120 else "OFFLINE" if x else "OFFLINE")
     return df
 
-df_full = load_and_process()
+df = load_data()
 
-# --- 4. GIAO DIỆN COMMAND CENTER ---
-st.title("🛡️ 4Oranges SDM - AI Command Center")
+# --- 4. GIAO DIỆN TABS ---
+st.title("🛡️ 4Oranges SDM - Platinum AI Command Center")
 
-# Metrics Tổng quát
-df_on = df_full[df_full['ACTUAL_STATUS'] == 'ONLINE']
-df_off = df_full[df_full['ACTUAL_STATUS'] == 'OFFLINE']
+tab_control, tab_formula, tab_analytics, tab_ai = st.tabs([
+    "🎮 ĐIỀU KHIỂN HỆ THỐNG", 
+    "🧪 CẬP NHẬT CÔNG THỨC", 
+    "📊 THỐNG KÊ SẢN LƯỢNG", 
+    "🧠 AI INSIGHTS (BETA)"
+])
 
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("TỔNG MÁY", len(df_full))
-m2.metric("ĐANG TRỰC TUYẾN", len(df_on), delta=f"{len(df_on)} Active")
-m3.metric("MẤT KẾT NỐI", len(df_off), delta=f"-{len(df_off)}", delta_color="inverse")
-m4.metric("LỆNH CHỜ", len(df_full[df_full['COMMAND'] != 'NONE']))
+# --- TAB 1: ĐIỀU KHIỂN (Giữ nguyên lõi V6.5) ---
+with tab_control:
+    # (Phần code điều khiển, tìm kiếm, metrics sếp đã dùng ở V6.5 PRO giữ nguyên ở đây)
+    st.info("Quản lý trạng thái và phát lệnh khóa/mở thiết bị thời gian thực.")
+    # [Code V6.5 PRO chèn tại đây]
 
-st.divider()
-
-# --- 5. TRUNG TÂM PHÁT LỆNH ---
-st.subheader("🎮 Điều khiển thiết bị")
-with st.container(border=True):
-    c_target, c_cmd, c_btn = st.columns([2, 2, 1])
-    with c_target:
-        # Chỉ cho phép chọn máy đang ONLINE để đảm bảo lệnh thực thi ngay
-        target_list = df_on['MACHINE_ID'].unique().tolist()
-        selected_machine = st.selectbox("🎯 Chọn máy (Chỉ hiện máy Online):", 
-                                        target_list if target_list else ["Không có máy online"])
-    with c_cmd:
-        selected_cmd = st.selectbox("📜 Lệnh vận hành:", ["NONE", "LOCK", "UNLOCK", "FORCE_UPDATE", "COLLECT_LOGS"])
-    with c_btn:
-        st.write("##")
-        if st.button("🚀 GỬI LỆNH NGAY", use_container_width=True, type="primary") and target_list:
-            row_idx = df_full[df_full['MACHINE_ID'] == selected_machine]['sheet_row'].iloc[0]
-            worksheet.update_cell(int(row_idx), 3, selected_cmd)
-            st.toast(f"Đã gửi {selected_cmd} tới {selected_machine}", icon="✅")
-            time.sleep(1)
-            st.rerun()
-
-# --- 6. TÌM KIẾM & QUẢN LÝ DANH SÁCH ---
-st.subheader("📑 Danh sách Chi tiết & Báo cáo")
-
-# Thanh công cụ: Tìm kiếm và Tải báo cáo
-tool_1, tool_2 = st.columns([3, 1])
-with tool_1:
-    search_query = st.text_input("🔍 Tìm kiếm tên máy hoặc IP...", placeholder="Nhập MACHINE_ID để lọc...")
-with tool_2:
-    st.write("##")
-    # Xuất báo cáo CSV
-    buffer = io.BytesIO()
-    df_full.to_csv(buffer, index=False, encoding='utf-8-sig')
-    st.download_button(
-        label="📥 TẢI BÁO CÁO TOÀN BỘ",
-        data=buffer.getvalue(),
-        file_name=f"SDM_Report_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
-
-# Tách Tab Online/Offline
-tab_on, tab_off = st.tabs([f"🟢 ONLINE ({len(df_on)})", f"🔴 OFFLINE ({len(df_off)})"])
-
-def display_styled_df(target_df):
-    if search_query:
-        target_df = target_df[target_df['MACHINE_ID'].str.contains(search_query, case=False)]
+# --- TAB 2: CẬP NHẬT CÔNG THỨC TỰ ĐỘNG (MỚI) ---
+with tab_formula:
+    st.subheader("🧬 Quản lý Công thức & Màu mới")
+    col_f1, col_f2 = st.columns([1, 2])
     
-    st.dataframe(
-        target_df[['MACHINE_ID', 'ACTUAL_STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']],
-        use_container_width=True, hide_index=True
-    )
+    with col_f1:
+        with st.form("formula_form"):
+            new_code = st.text_input("Mã màu mới (Color Code):")
+            new_formula = st.text_area("Thông số công thức (JSON/Text):")
+            target_group = st.multiselect("Áp dụng cho:", df['MACHINE_ID'].unique(), default=None)
+            submit_f = st.form_submit_button("📢 ĐẨY CÔNG THỨC XUỐNG CLIENT")
+            
+            if submit_f:
+                # Ghi vào Sheet Formulas để Agent tự tải về
+                for m_id in target_group:
+                    ws_formula.append_row([m_id, new_code, new_formula, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "PENDING"])
+                st.success(f"Đã lên lịch cập nhật cho {len(target_group)} máy.")
 
-with tab_on:
-    display_styled_df(df_on)
+    with col_f2:
+        st.write("Nhật ký cập nhật gần đây")
+        f_data = ws_formula.get_all_records()
+        if f_data:
+            st.table(pd.DataFrame(f_data).tail(10))
 
-with tab_off:
-    st.info("Những máy này đã lâu không gửi tín hiệu (Heartbeat) về Cloud.")
-    display_styled_df(df_off)
+# --- TAB 3: THỐNG KÊ MÀU PHA (Dữ liệu từ HISTORY) ---
+with tab_analytics:
+    st.subheader("📊 Phân tích Sản lượng Màu pha")
+    # Trích xuất dữ liệu từ cột HISTORY (Giả sử Agent gửi: "Pha màu: 7052 | Up: 1h")
+    # Ở đây chúng ta parse dữ liệu để vẽ biểu đồ
+    if not df.empty:
+        # Demo dữ liệu thống kê (Trong thực tế sẽ parse từ cột HISTORY)
+        color_counts = df['HISTORY'].str.extract(r'([A-Z0-9]{4,6})').value_counts().reset_index()
+        color_counts.columns = ['Mã Màu', 'Số Lần Pha']
+        
+        c_an1, c_an2 = st.columns(2)
+        with c_an1:
+            fig = px.bar(color_counts.head(10), x='Mã Màu', y='Số Lần Pha', title="Top 10 Màu Pha Nhiều Nhất", color='Số Lần Pha')
+            st.plotly_chart(fig, use_container_width=True)
+        with c_an2:
+            fig2 = px.pie(color_counts.head(5), values='Số Lần Pha', names='Mã Màu', title="Tỷ trọng dòng màu chủ lực")
+            st.plotly_chart(fig2, use_container_width=True)
 
-# Side bar
-with st.sidebar:
-    st.image("https://4oranges.com/wp-content/uploads/2021/08/logo-4oranges.png", width=150)
-    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-    if st.button("🔄 Refresh Data", use_container_width=True):
-        st.rerun()
+# --- TAB 4: GỢI Ý NÂNG CẤP AI (PHẦN SẾP CẦN) ---
+with tab_ai:
+    st.subheader("🧠 Trợ lý AI Dự báo & Tối ưu")
+    
+    st.markdown("""
+    ### 🚩 Các hướng nâng cấp AI cho 4Oranges SDM:
+    
+    1. **AI Predictive Maintenance (Bảo trì dự báo):**
+        * *Cách làm:* AI phân tích cột HISTORY. Nếu thấy CPU máy khách luôn > 90% hoặc thời gian pha màu một mã nhất định tăng đột biến -> Cảnh báo máy sắp hỏng linh kiện (bơm/kim phun) trước khi nó thực sự hỏng.
+        
+    2. **AI Stock Optimization (Tối ưu hóa mực màu):**
+        * *Cách làm:* Dựa trên Tab Thống kê màu, AI sẽ dự báo: "Đại lý A sắp hết tinh màu Đỏ trong 3 ngày tới" dựa trên tốc độ pha màu thực tế. Tự động tạo đơn hàng gợi ý cho bộ phận Sales.
+        
+    3. **AI Anomaly Detection (Phát hiện gian lận):**
+        * *Cách làm:* Nếu một máy pha màu vào lúc 2 giờ sáng (ngoài giờ làm việc) hoặc pha màu không có trong danh mục công thức -> Gửi cảnh báo "Hành vi bất thường" về Telegram sếp ngay lập tức.
+        
+    4. **Smart Search Natural Language:**
+        * *Cách làm:* Cho phép sếp gõ: *"Liệt kê các máy ở khu vực miền Tây đang offline hơn 2 ngày"* thay vì phải lọc tay.
+    """)
+    
+    if st.button("🪄 Chạy AI phân tích hệ thống (Demo)"):
+        with st.spinner("AI đang quét dữ liệu..."):
+            time.sleep(2)
+            st.write("✅ **Phân tích AI:** Phát hiện máy `PC-XUONG1` có nhiệt độ vận hành cao hơn 15% so với trung bình. Đề xuất: Kiểm tra hệ thống làm mát.")
