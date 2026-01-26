@@ -4,12 +4,25 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
-st.set_page_config(page_title="4Oranges SDM - AI Command Center", layout="wide")
+# --- CẤU HÌNH TRANG ---
+st.set_page_config(page_title="4Oranges SDM - AI Command Center", layout="wide", initial_sidebar_state="collapsed")
 
-# --- KẾT NỐI HỆ THỐNG (Giữ nguyên VerBase) ---
-@st.cache_resource
+# Custom CSS để giao diện "chất" hơn như hình sếp gửi
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #ff4b4b; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; }
+    .status-online { color: #28a745; font-weight: bold; }
+    .status-offline { color: #dc3545; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- KẾT NỐI HỆ THỐNG ---
+@st.cache_resource(ttl=300) # Cache 5 phút để tối ưu API
 def get_gspread_client():
     k_name = next((k for k in st.secrets if "GCP" in k or "base64" in k), None)
     info = json.loads(base64.b64decode(st.secrets[k_name]).decode('utf-8'))
@@ -23,76 +36,82 @@ sh = client.open_by_key(SHEET_ID)
 worksheet = sh.get_worksheet(0)
 
 # --- XỬ LÝ DỮ LIỆU ---
-# Lấy toàn bộ dữ liệu (không cache để đảm bảo máy mới hiện ra ngay)
-all_values = worksheet.get_all_values()
-headers = all_values[0]
-data_rows = all_values[1:]
+def load_data():
+    all_values = worksheet.get_all_values()
+    if not all_values: return pd.DataFrame()
+    df = pd.DataFrame(all_values[1:], columns=all_values[0])
+    df = df[df['MACHINE_ID'].str.strip() != ""].copy()
+    df['sheet_row'] = df.index + 2
+    
+    # Tính toán trạng thái thực tế dựa trên LAST_SEEN
+    now = datetime.now()
+    def check_alive(last_seen_str):
+        try:
+            ls = datetime.strptime(last_seen_str, "%d/%m/%Y %H:%M:%S")
+            return "ONLINE" if (now - ls).total_seconds() < 60 else "OFFLINE"
+        except: return "UNKNOWN"
+    
+    df['ACTUAL_STATUS'] = df['LAST_SEEN'].apply(check_alive)
+    return df
 
-# Tạo DataFrame và lọc bỏ dòng trống
-df = pd.DataFrame(data_rows, columns=headers)
-df = df[df['MACHINE_ID'].str.strip() != ""].reset_index() 
-# Lưu index gốc của Google Sheet (index + 2 vì Sheets bắt đầu từ 1 và có Header)
-df['sheet_row'] = df['index'] + 2
+df = load_data()
 
 # --- GIAO DIỆN CHÍNH ---
 st.title("🛡️ 4Oranges SDM - AI Command Center")
 
-# Khu vực hiển thị Metrics tổng quát
+# --- 1. METRICS DASHBOARD ---
 total_devices = len(df)
-online_count = len(df[df['STATUS'].str.upper() == 'ONLINE'])
-
-m1, m2, m3 = st.columns(3)
+online_count = len(df[df['ACTUAL_STATUS'] == 'ONLINE'])
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("TỔNG THIẾT BỊ", total_devices)
-m2.metric("ĐANG TRỰC TUYẾN", online_count)
-m3.metric("LỆNH CUỐI", df['COMMAND'].iloc[-1] if not df.empty else "N/A")
+m2.metric("ĐANG TRỰC TUYẾN", online_count, delta=f"{online_count/max(total_devices,1)*100:.1f}%")
+m3.metric("LỆNH CHỜ", len(df[df['COMMAND'] != 'NONE']))
+m4.metric("PHIÊN BẢN MỚI NHẤT", "V5.3-FINAL")
 
 st.divider()
 
-# --- TRUNG TÂM PHÁT LỆNH (Sửa lỗi không chọn được máy thứ 2) ---
+# --- 2. TRUNG TÂM PHÁT LỆNH ---
 st.subheader("🎮 Trung tâm Phát lệnh Điều khiển")
-
 with st.container(border=True):
     col_target, col_cmd, col_btn = st.columns([2, 2, 1])
-    
     with col_target:
-        # Lấy danh sách ID máy duy nhất và sạch sẽ
         machine_list = df['MACHINE_ID'].unique().tolist()
-        selected_machine = st.selectbox("🎯 Chọn máy mục tiêu:", machine_list, key="target_select")
-    
+        selected_machine = st.selectbox("🎯 Chọn máy mục tiêu:", machine_list)
     with col_cmd:
-        cmd_options = ["NONE", "LOCK", "UNLOCK", "START_DISPENSING", "STOP_EMERGENCY"]
+        cmd_options = ["NONE", "LOCK", "UNLOCK", "FORCE_UPDATE", "COLLECT_LOGS"]
         selected_cmd = st.selectbox("📜 Chọn lệnh vận hành:", cmd_options)
-        
     with col_btn:
         st.write("##")
         if st.button("🚀 GỬI LỆNH NGAY", use_container_width=True, type="primary"):
-            # Lấy đúng dòng trên Google Sheet của máy được chọn
-            row_in_sheet = df[df['MACHINE_ID'] == selected_machine]['sheet_row'].iloc[0]
-            
-            # Thực hiện cập nhật
-            now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            # Cột 3 là COMMAND, Cột 4 là LAST_SEEN
-            worksheet.update_cell(int(row_in_sheet), 3, selected_cmd)
-            worksheet.update_cell(int(row_in_sheet), 4, now)
-            
-            st.toast(f"Đã gửi lệnh {selected_cmd} tới {selected_machine}", icon="🚀")
+            row_idx = df[df['MACHINE_ID'] == selected_machine]['sheet_row'].iloc[0]
+            worksheet.update_cell(int(row_idx), 3, selected_cmd)
+            st.toast(f"Đã gửi {selected_cmd} tới {selected_machine}", icon="✅")
+            time.sleep(1)
             st.rerun()
 
-# --- DANH SÁCH CHI TIẾT ---
+# --- 3. BẢNG GIÁM SÁT CHI TIẾT ---
 st.subheader("📑 Danh sách thiết bị & Nhật ký")
 
-# Hàm định dạng màu sắc cho bảng
-def style_status(row):
-    color = 'background-color: #d4edda' if row.STATUS.upper() == 'ONLINE' else 'background-color: #f8d7da'
-    return [color] * len(row)
+# Định dạng bảng màu sắc
+def color_status(val):
+    if val == 'ONLINE': return 'color: #28a745; font-weight: bold'
+    if val == 'OFFLINE': return 'color: #dc3545'
+    return ''
 
-if not df.empty:
-    # Hiển thị bảng dữ liệu với màu sắc trực quan
-    st.dataframe(
-        df[['MACHINE_ID', 'STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']].style.apply(style_status, axis=1),
-        use_container_width=True,
-        hide_index=True
-    )
+st.dataframe(
+    df[['MACHINE_ID', 'ACTUAL_STATUS', 'COMMAND', 'LAST_SEEN', 'HISTORY']]
+    .style.applymap(color_status, subset=['ACTUAL_STATUS']),
+    use_container_width=True,
+    hide_index=True
+)
 
-if st.button("🔄 Làm mới hệ thống"):
-    st.rerun()
+# --- 4. TÍNH NĂNG MỞ RỘNG (DÀNH CHO TƯƠNG LAI) ---
+with st.sidebar:
+    st.image("https://4oranges.com/wp-content/uploads/2021/08/logo-4oranges.png", width=150)
+    st.header("Cài đặt hệ thống")
+    st.toggle("Tự động làm mới (30s)", value=True)
+    st.divider()
+    if st.button("🧹 Xóa Nhật ký cũ"):
+        st.warning("Tính năng đang phát triển")
+    
+    st.info(f"Đang quản lý: {total_devices} máy pha màu trên toàn quốc.")
