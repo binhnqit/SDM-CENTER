@@ -43,10 +43,9 @@ if not st.session_state['authenticated']:
                 st.error("Mật khẩu không chính xác.")
     st.stop()
 
-# --- AUTO-CLEAN ENGINE (Hệ thống tự dọn dẹp mảnh rác cũ khi load) ---
+# --- AUTO-CLEAN ENGINE ---
 def auto_clean():
     try:
-        # Xóa các mảnh đã truyền xong quá 24h
         sb.table("file_queue").delete().eq("status", "DONE").execute()
     except: pass
 
@@ -86,7 +85,7 @@ if not df_d.empty:
     m3.metric("Tải CPU TB", f"{df_d['cpu_usage'].mean():.1f}%")
     m4.metric("Dung lượng RAM", f"{df_d['ram_usage'].mean():.1f}%")
 
-# --- NAVIGATION TABS (Thêm Tab Quản trị vào đây) ---
+# --- NAVIGATION TABS ---
 t_mon, t_ctrl, t_file, t_sum, t_offline, t_ai, t_sys = st.tabs([
     "📊 GIÁM SÁT", "🎮 ĐIỀU KHIỂN", "📤 TRUYỀN FILE", "📜 TỔNG KẾT", "🕵️ TRUY VẾT", "🧠 AI INSIGHT", "⚙️ HỆ THỐNG"
 ])
@@ -131,10 +130,31 @@ with t_file:
             st.success("Bắt đầu truyền tải dữ liệu!")
 
 with t_sum:
-    st.subheader("Nhật ký đồng bộ hóa")
+    st.subheader("📜 Nhật ký đồng bộ hóa chi tiết")
     if not df_f.empty:
-        df_summary = df_f.groupby(['machine_id', 'file_name', 'status']).size().reset_index(name='mảnh')
-        st.table(df_summary)
+        # Xử lý Groupby chuyên sâu để tính tiến độ
+        df_summary = df_f.groupby(['machine_id', 'file_name', 'status']).size().unstack(fill_value=0).reset_index()
+        
+        # Đảm bảo có đủ cột để không lỗi
+        if 'DONE' not in df_summary.columns: df_summary['DONE'] = 0
+        if 'PENDING' not in df_summary.columns: df_summary['PENDING'] = 0
+        
+        df_summary['Tổng số mảnh'] = df_summary['DONE'] + df_summary['PENDING']
+        df_summary['Tiến độ (%)'] = (df_summary['DONE'] / df_summary['Tổng số mảnh'] * 100).round(1)
+        
+        st.dataframe(
+            df_summary[['machine_id', 'file_name', 'DONE', 'PENDING', 'Tiến độ (%)']],
+            column_config={
+                "machine_id": "Máy trạm",
+                "file_name": "Tên File SDF",
+                "DONE": "Đã xong",
+                "PENDING": "Đang chờ",
+                "Tiến độ (%)": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100, format="%f%%")
+            },
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("Chưa có tác vụ truyền file nào.")
 
 with t_offline:
     st.subheader("🕵️ Kiểm soát vắng mặt")
@@ -152,9 +172,8 @@ with t_ai:
             st.plotly_chart(fig, use_container_width=True)
     with c_ai2:
         st.info("Trạng thái bảo mật: **LEVEL 1 (Tối đa)**")
-        st.markdown(f"- **Online:** {online_now} máy\ - **Cần chú ý:** {len(df_d)-online_now} máy Offline.")
+        st.markdown(f"- **Online:** {online_now} máy\n- **Offline:** {len(df_d)-online_now} máy.")
 
-# --- TAB HỆ THỐNG (Đã đưa ra ngoài sidebar cho sếp) ---
 with t_sys:
     st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
     col1, col2 = st.columns(2)
@@ -163,7 +182,6 @@ with t_sys:
         if st.button("🧹 DỌN DẸP TOÀN BỘ RÁC", type="primary", use_container_width=True):
             with st.spinner("Đang dọn dẹp..."):
                 sb.table("file_queue").delete().eq("status", "DONE").execute()
-                # Xóa lệnh cũ hơn 7 ngày
                 week_ago = (datetime.now() - timedelta(days=7)).isoformat()
                 sb.table("commands").delete().lt("created_at", week_ago).execute()
                 st.success("Database đã được làm sạch!")
@@ -172,4 +190,3 @@ with t_sys:
         if not df_f.empty:
             pending = len(df_f[df_f['status'] == 'PENDING'])
             st.metric("Mảnh đang chờ truyền", pending)
-            if pending > 5000: st.warning("Dữ liệu chờ quá lớn, hãy kiểm tra kết nối các máy trạm.")
