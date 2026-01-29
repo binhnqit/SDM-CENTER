@@ -148,3 +148,54 @@ with t_ai:
         - **Bảo mật:** Không có dấu hiệu brute force vào hệ thống điều khiển.
         - **Khuyến nghị:** File `OZ MNAM 25-9.SDF` đã sẵn sàng triển khai diện rộng.
         """)
+# --- TAB TRUY VẾT OFFLINE (V4.3 OPTIMIZED) ---
+with t_offline:
+    st.subheader("🕵️ Kiểm soát thiết bị vắng mặt dài hạn")
+    
+    # Bộ lọc tinh tế theo phong cách Apple
+    col_filter1, col_filter2 = st.columns([2, 5])
+    with col_filter1:
+        threshold = st.selectbox(
+            "Ngưỡng thời gian vắng mặt:",
+            options=[15, 30, 60, 90],
+            format_func=lambda x: f"Trên {x} ngày",
+            index=0 # Mặc định 15 ngày
+        )
+    
+    if not df_d.empty:
+        # Tính toán thời gian offline chính xác
+        df_d['offline_duration'] = now_dt - df_d['last_seen_dt']
+        
+        # Lọc dữ liệu theo ngưỡng sếp chọn
+        long_offline = df_d[df_d['offline_duration'] > timedelta(days=threshold)].copy()
+        
+        if not long_offline.empty:
+            st.warning(f"Phát hiện **{len(long_offline)}** máy đã Offline trên {threshold} ngày.")
+            
+            # Tính toán định dạng thời gian thân thiện
+            long_offline['Thời gian Offline'] = long_offline['offline_duration'].apply(
+                lambda x: f"{x.days} ngày"
+            )
+            
+            # Sắp xếp máy vắng mặt lâu nhất lên đầu
+            long_offline = long_offline.sort_values(by='offline_duration', ascending=False)
+            
+            # Hiển thị bảng dữ liệu sạch
+            st.dataframe(
+                long_offline[['machine_id', 'last_seen', 'Thời gian Offline', 'status', 'agent_version']],
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Nút xuất báo cáo nhanh (CSV) để sếp gửi cho bộ phận kinh doanh đi kiểm tra đại lý
+            csv = long_offline.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Xuất danh sách xử lý (.csv)",
+                data=csv,
+                file_name=f'offline_over_{threshold}_days.csv',
+                mime='text/csv',
+            )
+        else:
+            st.success(f"Tuyệt vời! Không có máy nào vắng mặt trên {threshold} ngày.")
+    else:
+        st.info("Chưa có dữ liệu thiết bị để phân tích.")
