@@ -178,3 +178,24 @@ with t_ai:
         - **Cảnh báo:** {len(df_d[df_d['is_online']==False])} máy hiện đang Offline.
         - **Khuyến nghị:** Kiểm tra các máy vắng mặt trên 30 ngày để tối ưu băng thông.
         """)
+# --- TAB QUẢN TRỊ & TỐI ƯU ---
+with st.sidebar:
+    st.divider()
+    st.subheader("⚙️ System Maintenance")
+    if st.button("🧹 DỌN DẸP DỮ LIỆU RÁC", use_container_width=True):
+        with st.spinner("Đang tối ưu hóa Database..."):
+            # 1. Xóa các file đã truyền xong (DONE) để giải phóng dung lượng
+            sb.table("file_queue").delete().eq("status", "DONE").execute()
+            
+            # 2. Xóa các lệnh cũ hơn 30 ngày
+            thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
+            sb.table("commands").delete().lt("created_at", thirty_days_ago).execute()
+            
+            st.success("Hệ thống đã được làm sạch! Dung lượng đã giải phóng.")
+            st.rerun()
+
+    # Tự động cảnh báo dung lượng
+    if not df_f.empty:
+        pending_count = len(df_f[df_f['status'] == 'PENDING'])
+        if pending_count > 1000:
+            st.warning(f"⚠️ Cảnh báo: Có {pending_count} tác vụ đang chờ. Hãy dọn dẹp sau khi hoàn tất.")
