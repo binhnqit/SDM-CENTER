@@ -118,26 +118,35 @@ with t_control:
 
 # --- TAB: TRUYỀN FILE ---
 with t_file:
-    st.subheader("📦 Đẩy dữ liệu công thức đa điểm")
-    f_upload = st.file_uploader("Chọn file .SDF chính thức:", type=['sdf'])
-    f_targets = st.multiselect("Chọn máy nhận (Gợi ý: Chọn nhóm máy Miền Tây/Miền Đông):", df_devices['machine_id'].tolist(), key="file_sync")
+    st.subheader("📦 Đẩy dữ liệu SDF hàng loạt")
+    up_file = st.file_uploader("Chọn file .SDF:", type=['sdf'])
+    f_targets = st.multiselect("Chọn máy nhận:", df_devices['machine_id'].tolist() if not df_devices.empty else [])
     
-    if st.button("📤 BẮT ĐẦU ĐỒNG BỘ") and f_upload and f_targets:
-        with st.spinner("Đang chuẩn bị các gói tin (Chunks)..."):
-            content = f_upload.getvalue()
-            encoded = base64.b64encode(zlib.compress(content)).decode('utf-8')
-            chunk_size = 35000
-            chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
-            ts = datetime.now().isoformat()
-            
-            payload = []
-            for m in f_targets:
-                for i, c in enumerate(chunks):
-                    payload.append({
-                        "machine_id": m, "file_name": f_upload.name,
-                        "data_chunk": c, "part_info": f"PART_{i+1}/{len(chunks)}",
-                        "target_path": r"C:\ProgramData\Fast and Fluid Management\PrismaPro\Updates",
-                        "timestamp": ts, "status": "PENDING"
-                    })
-            
-            # Ghi
+    if st.button("📤 BẮT ĐẦU ĐẨY FILE"):
+        if up_file and f_targets:
+            with st.status("AI đang xử lý file..."):
+                # 1. Nén và mã hóa file
+                raw_data = up_file.getvalue()
+                encoded = base64.b64encode(zlib.compress(raw_data)).decode('utf-8')
+                
+                # 2. Chia nhỏ (Chunking) để vượt rào cản băng thông
+                chunk_size = 30000
+                chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
+                ts = datetime.now().strftime("%Y%m%d%H%M%S") # Tạo timestamp định danh duy nhất
+                
+                payload = []
+                for m in f_targets:
+                    for i, c in enumerate(chunks):
+                        payload.append({
+                            "machine_id": m,
+                            "file_name": up_file.name,
+                            "data_chunk": c,
+                            "part_info": f"PART_{i+1}/{len(chunks)}",
+                            "timestamp": ts, # Timestamp này giúp Agent nhận biết bộ file
+                            "target_path": r"C:\ProgramData\Fast and Fluid Management\PrismaPro\Updates",
+                            "status": "PENDING"
+                        })
+                
+                # 3. Đẩy lên Supabase
+                sb.table("file_queue").insert(payload).execute()
+                st.success(f"🚀 Đã phát lệnh truyền file {up_file.name} tới {len(f_targets)} máy!")
