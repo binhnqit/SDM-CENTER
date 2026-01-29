@@ -43,10 +43,12 @@ if not st.session_state['authenticated']:
                 st.error("Mật khẩu không chính xác.")
     st.stop()
 
-# --- AUTO-CLEAN ENGINE ---
+# --- AUTO-CLEAN ENGINE (Đã sửa đổi để giữ lại nhật ký) ---
 def auto_clean():
     try:
-        sb.table("file_queue").delete().eq("status", "DONE").execute()
+        # Chỉ xóa dữ liệu đã hoàn thành cách đây hơn 3 ngày để sếp còn xem nhật ký
+        three_days_ago = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+        sb.table("file_queue").delete().eq("status", "DONE").lt("timestamp", three_days_ago).execute()
     except: pass
 
 auto_clean()
@@ -56,6 +58,7 @@ def load_all_data():
     try:
         dev = sb.table("devices").select("*").execute()
         cmd = sb.table("commands").select("*").order("created_at", desc=True).limit(20).execute()
+        # Lấy file_queue để thống kê
         files = sb.table("file_queue").select("*").order("timestamp", desc=True).execute()
         return pd.DataFrame(dev.data), pd.DataFrame(cmd.data), pd.DataFrame(files.data)
     except: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -130,31 +133,31 @@ with t_file:
             st.success("Bắt đầu truyền tải dữ liệu!")
 
 with t_sum:
-    st.subheader("📜 Nhật ký đồng bộ hóa chi tiết")
+    st.subheader("📜 Nhật ký đồng bộ hóa & Kết quả nhận file")
     if not df_f.empty:
-        # Xử lý Groupby chuyên sâu để tính tiến độ
+        # Nhóm dữ liệu để xem máy nào đã nhận đủ mảnh
         df_summary = df_f.groupby(['machine_id', 'file_name', 'status']).size().unstack(fill_value=0).reset_index()
         
-        # Đảm bảo có đủ cột để không lỗi
+        # Đảm bảo cột trạng thái tồn tại
         if 'DONE' not in df_summary.columns: df_summary['DONE'] = 0
         if 'PENDING' not in df_summary.columns: df_summary['PENDING'] = 0
         
-        df_summary['Tổng số mảnh'] = df_summary['DONE'] + df_summary['PENDING']
-        df_summary['Tiến độ (%)'] = (df_summary['DONE'] / df_summary['Tổng số mảnh'] * 100).round(1)
+        df_summary['Tổng mảnh'] = df_summary['DONE'] + df_summary['PENDING']
+        df_summary['Trạng thái'] = df_summary.apply(lambda x: "✅ Hoàn tất" if x['PENDING'] == 0 else "⏳ Đang nhận...", axis=1)
         
         st.dataframe(
-            df_summary[['machine_id', 'file_name', 'DONE', 'PENDING', 'Tiến độ (%)']],
+            df_summary[['machine_id', 'file_name', 'DONE', 'PENDING', 'Tổng mảnh', 'Trạng thái']],
             column_config={
                 "machine_id": "Máy trạm",
-                "file_name": "Tên File SDF",
-                "DONE": "Đã xong",
-                "PENDING": "Đang chờ",
-                "Tiến độ (%)": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100, format="%f%%")
+                "file_name": "Tên File",
+                "DONE": "Đã nhận",
+                "PENDING": "Chờ nhận",
+                "Trạng thái": "Kết quả"
             },
             use_container_width=True, hide_index=True
         )
     else:
-        st.info("Chưa có tác vụ truyền file nào.")
+        st.info("Chưa có nhật ký truyền file nào được lưu trữ.")
 
 with t_offline:
     st.subheader("🕵️ Kiểm soát vắng mặt")
@@ -178,13 +181,11 @@ with t_sys:
     st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
     col1, col2 = st.columns(2)
     with col1:
-        st.write("Giải phóng dung lượng bằng cách xóa dữ liệu cũ.")
-        if st.button("🧹 DỌN DẸP TOÀN BỘ RÁC", type="primary", use_container_width=True):
+        st.write("Giải phóng dung lượng thủ công.")
+        if st.button("🧹 DỌN DẸP TOÀN BỘ RÁC (Xóa hết nhật ký DONE)", type="primary", use_container_width=True):
             with st.spinner("Đang dọn dẹp..."):
                 sb.table("file_queue").delete().eq("status", "DONE").execute()
-                week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-                sb.table("commands").delete().lt("created_at", week_ago).execute()
-                st.success("Database đã được làm sạch!")
+                st.success("Đã xóa toàn bộ nhật ký hoàn tất!")
                 time.sleep(1); st.rerun()
     with col2:
         if not df_f.empty:
