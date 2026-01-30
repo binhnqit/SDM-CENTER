@@ -116,32 +116,41 @@ with t_ctrl:
 with t_file:
     st.subheader("Phát hành bộ dữ liệu SDF")
     file_up = st.file_uploader("Kéo thả file .SDF", type=['sdf'])
-    f_targets = st.multiselect("Đại lý nhận mục tiêu:", df_d['machine_id'].tolist() if not df_d.empty else [])
+    # Lấy danh sách máy thực tế đang Online để tránh chọn sai tên
+    if not df_d.empty:
+        active_machines = df_d['machine_id'].unique().tolist()
+    else:
+        active_machines = []
+        
+    f_targets = st.multiselect("Đại lý nhận mục tiêu:", active_machines)
     
     if st.button("🚀 KÍCH HOẠT ĐỒNG BỘ") and file_up and f_targets:
         with st.status("Đang xử lý dữ liệu chiến lược..."):
             encoded = base64.b64encode(zlib.compress(file_up.getvalue())).decode('utf-8')
-            chunk_size = 100000 # 100KB mỗi mảnh để giảm tải số dòng
+            chunk_size = 100000 
             chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
             
             for m in f_targets:
-                # Tạo timestamp riêng biệt cho từng máy để chống nghẽn
-                ts = datetime.now().strftime("%Y%m%d%H%M%S") + f"_{m}"
-                st.write(f"📦 Đang đẩy dữ liệu cho máy: {m}...")
+                # Tạo timestamp đồng nhất cho tất cả mảnh của 1 file
+                ts = datetime.now().strftime("%Y%m%d%H%M%S")
                 
                 payload = []
                 for i, c in enumerate(chunks):
                     payload.append({
-                        "machine_id": m, "file_name": file_up.name, "data_chunk": c,
-                        "part_info": f"PART_{i+1}/{len(chunks)}", "timestamp": ts,
-                        "status": "PENDING"
+                        "machine_id": m, 
+                        "file_name": file_up.name, 
+                        "data_chunk": c,
+                        "part_info": f"PART_{i+1}/{len(chunks)}", 
+                        "timestamp": ts,
+                        "status": "PENDING" # Ép chữ PENDING vào đây
                     })
                 
-                # Insert theo cụm 50 dòng để Database không bị Overload
+                # Insert dữ liệu
                 for j in range(0, len(payload), 50):
                     sb.table("file_queue").insert(payload[j:j+50]).execute()
             
-            st.success(f"Đã phát hành thành công!")
+            st.success(f"Đã phát hành thành công cho {len(f_targets)} máy!")
+            time.sleep(1)
             st.rerun()
 
 with t_sum:
