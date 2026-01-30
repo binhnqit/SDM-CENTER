@@ -145,31 +145,27 @@ with t_file:
             st.rerun()
 
 with t_sum:
-    st.subheader("📜 Nhật ký đồng bộ hóa & Kết quả nhận file")
+    st.subheader("📜 Nhật ký vận hành hệ thống")
     if not df_f.empty:
-        # Nhóm dữ liệu để xem máy nào đã nhận đủ mảnh
-        df_summary = df_f.groupby(['machine_id', 'file_name', 'status']).size().unstack(fill_value=0).reset_index()
+        # Gom nhóm theo máy và tên file, lấy trạng thái mới nhất
+        # Logic: Nếu có bất kỳ mảnh nào còn PENDING thì file đó vẫn là "Đang nhận"
+        summary = df_f.sort_values('status', ascending=False).drop_duplicates(['machine_id', 'timestamp'])
         
-        # Đảm bảo cột trạng thái tồn tại
-        if 'DONE' not in df_summary.columns: df_summary['DONE'] = 0
-        if 'PENDING' not in df_summary.columns: df_summary['PENDING'] = 0
-        
-        df_summary['Tổng mảnh'] = df_summary['DONE'] + df_summary['PENDING']
-        df_summary['Trạng thái'] = df_summary.apply(lambda x: "✅ Hoàn tất" if x['PENDING'] == 0 else "⏳ Đang nhận...", axis=1)
+        # Định dạng lại bảng cho chuyên nghiệp
+        summary['Kết quả'] = summary['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang truyền...")
         
         st.dataframe(
-            df_summary[['machine_id', 'file_name', 'DONE', 'PENDING', 'Tổng mảnh', 'Trạng thái']],
+            summary[['machine_id', 'file_name', 'timestamp', 'Kết quả']],
             column_config={
-                "machine_id": "Máy trạm",
-                "file_name": "Tên File",
-                "DONE": "Đã nhận",
-                "PENDING": "Chờ nhận",
-                "Trạng thái": "Kết quả"
+                "machine_id": "Mã thiết bị",
+                "file_name": "Tên bộ dữ liệu",
+                "timestamp": "Thời gian phát hành",
+                "Kết quả": st.column_config.TextColumn("Trạng thái", help="DONE = Đã lưu trên máy trạm")
             },
             use_container_width=True, hide_index=True
         )
     else:
-        st.info("Chưa có nhật ký truyền file nào được lưu trữ.")
+        st.info("Chưa có dữ liệu vận hành.")
 
 with t_offline:
     st.subheader("🕵️ Kiểm soát vắng mặt")
