@@ -46,12 +46,14 @@ if not st.session_state['authenticated']:
 # --- AUTO-CLEAN ENGINE (Đã sửa đổi để giữ lại nhật ký) ---
 def auto_clean():
     try:
-        # Chỉ xóa dữ liệu đã hoàn thành cách đây hơn 3 ngày để sếp còn xem nhật ký
-        three_days_ago = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
-        sb.table("file_queue").delete().eq("status", "DONE").lt("timestamp", three_days_ago).execute()
-    except: pass
-
-auto_clean()
+        # Sếp muốn giữ 30 ngày? Chỉ cần sửa số 30 ở đây
+        retention_days = 30 
+        past_date = (datetime.now() - timedelta(days=retention_days)).strftime("%Y-%m-%d")
+        
+        # Xóa các bản ghi đã DONE và cũ hơn 30 ngày
+        sb.table("file_queue").delete().eq("status", "DONE").lt("timestamp", past_date).execute()
+    except: 
+        pass
 
 # --- DATA ENGINE ---
 def load_all_data():
