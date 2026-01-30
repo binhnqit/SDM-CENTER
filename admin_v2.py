@@ -115,22 +115,36 @@ with t_file:
     st.subheader("Phát hành bộ dữ liệu SDF")
     file_up = st.file_uploader("Kéo thả file .SDF", type=['sdf'])
     f_targets = st.multiselect("Đại lý nhận mục tiêu:", df_d['machine_id'].tolist() if not df_d.empty else [])
+    
     if st.button("🚀 KÍCH HOẠT ĐỒNG BỘ") and file_up and f_targets:
-        with st.status("Đang phân mảnh & Mã hóa..."):
+        with st.status("Đang xử lý dữ liệu chiến lược..."):
+            # 1. Nén và mã hóa
             encoded = base64.b64encode(zlib.compress(file_up.getvalue())).decode('utf-8')
-            chunk_size = 30000
+            
+            # 2. Tăng kích thước mảnh lên 100KB để giảm số lượng dòng (Giúp Agent ghép nhanh hơn)
+            chunk_size = 100000 
             chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
             ts = datetime.now().strftime("%Y%m%d%H%M%S")
-            payload = []
+            
+            # 3. Thay vì dồn hết vào 1 payload to, ta insert theo từng máy
             for m in f_targets:
+                st.write(f" đang đẩy dữ liệu cho máy: {m}...")
+                machine_payload = []
                 for i, c in enumerate(chunks):
-                    payload.append({
+                    machine_payload.append({
                         "machine_id": m, "file_name": file_up.name, "data_chunk": c,
                         "part_info": f"PART_{i+1}/{len(chunks)}", "timestamp": ts,
                         "status": "PENDING"
                     })
-            sb.table("file_queue").insert(payload).execute()
-            st.success("Bắt đầu truyền tải dữ liệu!")
+                
+                # Insert từng cụm mảnh của mỗi máy để tránh lỗi Payload Too Large
+                try:
+                    sb.table("file_queue").insert(machine_payload).execute()
+                    time.sleep(0.5) # Nghỉ một chút để Cloud kịp thở
+                except Exception as e:
+                    st.error(f"Lỗi tại máy {m}: {e}")
+            
+            st.success(f"Đã phát hành file {file_up.name} thành công!")
 
 with t_sum:
     st.subheader("📜 Nhật ký đồng bộ hóa & Kết quả nhận file")
