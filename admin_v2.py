@@ -155,29 +155,29 @@ with t_file:
 
 with t_sum:
     st.subheader("📜 Nhật ký vận hành hệ thống")
-    # Lấy toàn bộ dữ liệu không lọc status để đảm bảo luôn thấy lịch sử
-    files_res = sb.table("file_queue").select("*").order("timestamp", desc=True).execute()
+    # Lấy cả PENDING và DONE để không bao giờ bị trống
+    res = sb.table("file_queue").select("*").order("timestamp", desc=True).limit(200).execute()
     
-    if files_res.data:
-        df_log = pd.DataFrame(files_res.data)
-        # Gom nhóm theo timestamp để mỗi lần gửi file chỉ hiện 1 dòng duy nhất
-        df_display = df_log.sort_values('status', ascending=False).drop_duplicates(['machine_id', 'timestamp'])
+    if res.data:
+        df = pd.DataFrame(res.data)
+        # Gom nhóm theo timestamp và máy để hiện mỗi file 1 dòng
+        log_df = df.drop_duplicates(subset=['machine_id', 'timestamp'])
         
-        # Định dạng Apple Style
-        df_display['Trạng thái'] = df_display['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang xử lý...")
+        # Tạo cột trạng thái chuyên nghiệp
+        log_df['Kết quả'] = log_df['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang nhận...")
         
         st.dataframe(
-            df_display[['machine_id', 'file_name', 'timestamp', 'Trạng thái']],
+            log_df[['machine_id', 'file_name', 'timestamp', 'Kết quả']],
             column_config={
-                "machine_id": "Máy nhận",
-                "file_name": "Tên bộ dữ liệu",
-                "timestamp": "Mã phiên gửi",
-                "Trạng thái": st.column_config.TextColumn("Kết quả", help="DONE: File đã nằm trong thư mục Updates")
+                "machine_id": "Máy trạm",
+                "file_name": "Tên File",
+                "timestamp": "Mã phiên",
+                "Kết quả": st.column_config.TextColumn("Trạng thái")
             },
             use_container_width=True, hide_index=True
         )
     else:
-        st.info("Chưa có dữ liệu vận hành trong Database.")
+        st.info("Hệ thống sạch sẽ - Chưa có lịch sử truyền file.")
 
 with t_offline:
     st.subheader("🕵️ Kiểm soát vắng mặt")
