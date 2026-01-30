@@ -119,13 +119,13 @@ with t_file:
     if st.button("🚀 KÍCH HOẠT ĐỒNG BỘ") and file_up and f_targets:
         with st.status("Đang xử lý dữ liệu chiến lược..."):
             encoded = base64.b64encode(zlib.compress(file_up.getvalue())).decode('utf-8')
-            chunk_size = 100000 
+            chunk_size = 100000 # 100KB mỗi mảnh để giảm tải số dòng
             chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
             
             for m in f_targets:
-                # MỖI MÁY MỘT TIMESTAMP RIÊNG - CHỐNG NHẦM LẪN 100%
-                ts = datetime.now().strftime("%Y%m%d%H%M%S") + f"_{m}" 
-                st.write(f"📦 Đang đẩy {len(chunks)} mảnh cho máy: {m}...")
+                # Tạo timestamp riêng biệt cho từng máy để chống nghẽn
+                ts = datetime.now().strftime("%Y%m%d%H%M%S") + f"_{m}"
+                st.write(f"📦 Đang đẩy dữ liệu cho máy: {m}...")
                 
                 payload = []
                 for i, c in enumerate(chunks):
@@ -135,13 +135,12 @@ with t_file:
                         "status": "PENDING"
                     })
                 
-                # Chia nhỏ payload gửi lên Supabase (mỗi lần 50 dòng) để tránh lỗi mạng
+                # Insert theo cụm 50 dòng để Database không bị Overload
                 for j in range(0, len(payload), 50):
                     sb.table("file_queue").insert(payload[j:j+50]).execute()
-                time.sleep(0.2)
             
             st.success(f"Đã phát hành thành công!")
-            time.sleep(1); st.rerun()
+            st.rerun()
 
 with t_sum:
     st.subheader("📜 Nhật ký đồng bộ hóa & Kết quả nhận file")
