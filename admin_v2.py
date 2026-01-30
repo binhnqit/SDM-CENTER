@@ -155,26 +155,29 @@ with t_file:
 
 with t_sum:
     st.subheader("📜 Nhật ký vận hành hệ thống")
-    if not df_f.empty:
-        # Gom nhóm theo máy và tên file, lấy trạng thái mới nhất
-        # Logic: Nếu có bất kỳ mảnh nào còn PENDING thì file đó vẫn là "Đang nhận"
-        summary = df_f.sort_values('status', ascending=False).drop_duplicates(['machine_id', 'timestamp'])
+    # Lấy toàn bộ dữ liệu không lọc status để đảm bảo luôn thấy lịch sử
+    files_res = sb.table("file_queue").select("*").order("timestamp", desc=True).execute()
+    
+    if files_res.data:
+        df_log = pd.DataFrame(files_res.data)
+        # Gom nhóm theo timestamp để mỗi lần gửi file chỉ hiện 1 dòng duy nhất
+        df_display = df_log.sort_values('status', ascending=False).drop_duplicates(['machine_id', 'timestamp'])
         
-        # Định dạng lại bảng cho chuyên nghiệp
-        summary['Kết quả'] = summary['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang truyền...")
+        # Định dạng Apple Style
+        df_display['Trạng thái'] = df_display['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang xử lý...")
         
         st.dataframe(
-            summary[['machine_id', 'file_name', 'timestamp', 'Kết quả']],
+            df_display[['machine_id', 'file_name', 'timestamp', 'Trạng thái']],
             column_config={
-                "machine_id": "Mã thiết bị",
+                "machine_id": "Máy nhận",
                 "file_name": "Tên bộ dữ liệu",
-                "timestamp": "Thời gian phát hành",
-                "Kết quả": st.column_config.TextColumn("Trạng thái", help="DONE = Đã lưu trên máy trạm")
+                "timestamp": "Mã phiên gửi",
+                "Trạng thái": st.column_config.TextColumn("Kết quả", help="DONE: File đã nằm trong thư mục Updates")
             },
             use_container_width=True, hide_index=True
         )
     else:
-        st.info("Chưa có dữ liệu vận hành.")
+        st.info("Chưa có dữ liệu vận hành trong Database.")
 
 with t_offline:
     st.subheader("🕵️ Kiểm soát vắng mặt")
