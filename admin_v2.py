@@ -170,9 +170,51 @@ if not df_d.empty:
     m4.metric("Dung lượng RAM", f"{df_d['ram_usage'].mean():.1f}%")
 
 # --- NAVIGATION ---
+# --- NAVIGATION TABS ---
 t_mon, t_ctrl, t_file, t_sum, t_ai, t_import, t_tokens, t_sys = st.tabs([
     "📊 GIÁM SÁT", "🎮 ĐIỀU KHIỂN", "📤 TRUYỀN FILE", "📜 TỔNG KẾT", "🧠 AI INSIGHT", "📥 IMPORT DATA", "🔑 TOKEN", "⚙️ HỆ THỐNG"
 ])
+
+# --- NỘI DUNG TAB ĐIỀU KHIỂN (PHỤC HỒI) ---
+with t_ctrl:
+    st.subheader("🎮 Trung tâm điều hành thiết bị")
+    
+    # Lấy danh sách ID máy để điều khiển
+    machine_list = df_d['machine_id'].tolist() if not df_d.empty else []
+    
+    if not machine_list:
+        st.warning("⚠️ Không tìm thấy thiết bị nào để điều khiển. Kiểm tra kết nối Supabase.")
+    else:
+        selected_machines = st.multiselect("🎯 Nhắm mục tiêu (Chọn một hoặc nhiều máy):", machine_list)
+        
+        c_btn1, c_btn2, c_btn3 = st.columns([1, 1, 2])
+        
+        with c_btn1:
+            if st.button("🔒 KHÓA MÁY", use_container_width=True, type="primary"):
+                if selected_machines:
+                    payload = [{"machine_id": m, "command": "LOCK", "status": "PENDING"} for m in selected_machines]
+                    sb.table("commands").insert(payload).execute()
+                    st.toast(f"✅ Đã gửi lệnh KHÓA tới {len(selected_machines)} máy")
+                else:
+                    st.error("Vui lòng chọn máy!")
+
+        with c_btn2:
+            if st.button("🔓 MỞ MÁY", use_container_width=True):
+                if selected_machines:
+                    payload = [{"machine_id": m, "command": "UNLOCK", "status": "PENDING"} for m in selected_machines]
+                    sb.table("commands").insert(payload).execute()
+                    st.toast(f"✅ Đã gửi lệnh MỞ tới {len(selected_machines)} máy")
+                else:
+                    st.error("Vui lòng chọn máy!")
+        
+        with c_btn3:
+            st.info("💡 Lệnh sẽ được thực thi ngay khi máy trạm (Agent) đồng bộ.")
+
+    # Hiển thị lịch sử lệnh vừa gửi
+    st.write("---")
+    st.write("**📜 Lịch sử lệnh gần đây:**")
+    if not df_c.empty:
+        st.dataframe(df_c[['machine_id', 'command', 'created_at']].head(10), use_container_width=True)
 
 with t_mon:
     st.dataframe(df_d[['machine_id', 'status', 'cpu_usage', 'ram_usage', 'last_seen']], use_container_width=True, hide_index=True)
