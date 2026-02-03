@@ -73,7 +73,7 @@ df_d, df_c, df_f = load_all_data()
 # --- HEADER ---
 c_head1, c_head2 = st.columns([3, 1])
 with c_head1:
-    st.title("🍊🍊🍊🍊 HỆ THỐNG QUẢN LÝ MÁY PHA MÀU 4ORANGES CÓ TÍCH HỢP AI")
+    st.title("🍊🍊🍊🍊 HỆ THỐNG QUẢN LÝ MÁY PHA MÀU 4ORANGES - AI")
     st.caption(f"Hệ thống vận hành thông minh v4.4 | {datetime.now().strftime('%d/%m/%Y')}")
 with c_head2:
     if st.button("Đăng xuất", use_container_width=True):
