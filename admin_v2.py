@@ -4,12 +4,15 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone  # Thêm timezone vào đây
 import plotly.express as px
 import base64, zlib, time
+import streamlit as st
 
-# --- CORE CONFIG & SECURITY ---
-SUPABASE_URL = "https://glzdktdphoydqhofszvh.supabase.co"
-SUPABASE_KEY = "sb_publishable_MCfri2GPc3dn-bIcx_XJ_A_RxgsF1YU"
-ADMIN_PASSWORD = "Qb1100589373@" 
+# --- CORE CONFIG FROM SECRETS ---
+# Không còn hard-code, bảo mật tuyệt đối khi chia sẻ code
+SUPABASE_URL = st.secrets["supabase"]["url"]
+SUPABASE_KEY = st.secrets["supabase"]["key"]
+ADMIN_PASSWORD = st.secrets["auth"]["admin_password"]
 
+# Các phần khởi tạo Client giữ nguyên
 sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="4Oranges SDM Lux Secure Pro", layout="wide", initial_sidebar_state="expanded")
