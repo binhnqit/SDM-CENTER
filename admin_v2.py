@@ -310,6 +310,17 @@ def render_ai_strategic_hub_v3(df_d, now_dt, sb):
             with st.spinner("AI đang truy vấn Memory..."):
                 # Sau này sẽ kết nối với Layer 4 LLM thực thụ
                 st.chat_message("assistant").write(f"Dựa trên Snapshot lúc {latest['created_at']}, rủi ro tăng do có cụm {latest['new_offline_1h']} máy mới ngắt kết nối đồng loạt.")
+    with t_ai:
+    if not df_d.empty:
+        # Lấy now_dt chuẩn theo timezone của dữ liệu
+        try:
+            now_dt_aware = datetime.now(df_d['last_seen_dt'].dt.tz[0])
+        except:
+            now_dt_aware = datetime.now(timezone.utc)
+            
+        render_ai_strategic_hub(df_d, now_dt_aware)
+    else:
+        st.info("Đang tải dữ liệu từ trung tâm...")
 with t_sys:
     st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
     col1, col2 = st.columns(2)
