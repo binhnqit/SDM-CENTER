@@ -355,17 +355,3 @@ with t_sys:
         if not df_f.empty:
             pending = len(df_f[df_f['status'] == 'PENDING'])
             st.metric("Mảnh đang chờ truyền", pending)
-with t_sys:
-    st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("Giải phóng dung lượng thủ công.")
-        if st.button("🧹 DỌN DẸP TOÀN BỘ RÁC (Xóa hết nhật ký DONE)", type="primary", use_container_width=True):
-            with st.spinner("Đang dọn dẹp..."):
-                sb.table("file_queue").delete().eq("status", "DONE").execute()
-                st.success("Đã xóa toàn bộ nhật ký hoàn tất!")
-                time.sleep(1); st.rerun()
-    with col2:
-        if not df_f.empty:
-            pending = len(df_f[df_f['status'] == 'PENDING'])
-            st.metric("Mảnh đang chờ truyền", pending)
