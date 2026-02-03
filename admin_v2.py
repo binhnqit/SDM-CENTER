@@ -36,7 +36,7 @@ if not st.session_state['authenticated']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.write(""); st.write("") 
-        st.markdown("<div style='text-align: center;'><h1 style='color: #1d1d1f;'>🍊🍊🍊🍊 4oranges Secure</h1><p style='color: #86868b;'>Vui lòng nhập mật khẩu quản trị</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center;'><h1 style='color: #1d1d1f;'>🍊🍊🍊🍊 4Oranges Secure</h1><p style='color: #86868b;'>Vui lòng nhập mật khẩu quản trị</p></div>", unsafe_allow_html=True)
         pwd = st.text_input("", type="password", placeholder="Password", label_visibility="collapsed")
         if st.button("Đăng nhập", use_container_width=True, type="primary"):
             if pwd == ADMIN_PASSWORD:
