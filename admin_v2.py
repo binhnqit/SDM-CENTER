@@ -311,7 +311,7 @@ def render_ai_strategic_hub_v3(df_d, now_dt, sb):
                 # Sau này sẽ kết nối với Layer 4 LLM thực thụ
                 st.chat_message("assistant").write(f"Dựa trên Snapshot lúc {latest['created_at']}, rủi ro tăng do có cụm {latest['new_offline_1h']} máy mới ngắt kết nối đồng loạt.")
    # --- PHẦN GỌI TAB TRONG APP CHÍNH ---
-with t_ai:
+    with t_ai:
     # PHẢI THỤT VÀO 1 TAB TỪ ĐÂY
     if not df_d.empty:
         # Lấy now_dt chuẩn theo timezone của dữ liệu
