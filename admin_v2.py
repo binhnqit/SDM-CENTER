@@ -57,7 +57,84 @@ def auto_clean():
         sb.table("file_queue").delete().eq("status", "DONE").lt("timestamp", past_date).execute()
     except: 
         pass
+def render_import_portal(sb):
+    st.markdown("""
+        <div style="background-color: #0071e3; padding: 20px; border-radius: 15px; color: white; margin-bottom: 20px;">
+            <h2 style="margin:0;">📥 AI Data Port</h2>
+            <p style="margin:0; opacity: 0.8;">Hệ thống nạp dữ liệu lịch sử pha màu (DispenseHistory.csv)</p>
+        </div>
+    """, unsafe_allow_html=True)
 
+    c1, c2 = st.columns([1, 2])
+    
+    with c1:
+        st.info("💡 **Hướng dẫn:** Xuất file .csv từ phần mềm pha màu và tải lên đây để AI phân tích sản lượng và lỗi kỹ thuật.")
+        # Lấy danh sách máy để gán dữ liệu
+        res_dev = sb.table("devices").select("machine_id").execute()
+        list_machines = [d['machine_id'] for d in res_dev.data] if res_dev.data else ["Unknown"]
+        selected_target = st.selectbox("🎯 Gán dữ liệu cho máy:", list_machines)
+        
+        uploaded_file = st.file_uploader("Kéo thả file .csv vào đây", type=['csv'])
+
+    if uploaded_file is not None:
+        try:
+            # Đọc dữ liệu
+            df = pd.read_csv(uploaded_file)
+            
+            # --- PHÂN TÍCH NHANH (PREVIEW) ---
+            with c2:
+                st.write("🔍 **Xem trước dữ liệu:**")
+                # Tính tổng thực tế từ các Line Dispensed (Spec của sếp)
+                line_cols = [c for c in df.columns if 'LINES_DISPENSED_AMOUNT' in c]
+                df['ACTUAL_TOTAL'] = df[line_cols].sum(axis=1)
+                
+                # Tính sai số
+                df['ERROR_GAP'] = (df['WANTED_AMOUNT'] - df['ACTUAL_TOTAL']).abs()
+                
+                # Hiển thị số liệu tổng quan
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Tổng mẻ pha", len(df))
+                m2.metric("Doanh số", f"{df['PRICE'].sum():,.0f} VND")
+                m3.metric("Sai số TB", f"{df['ERROR_GAP'].mean():.4f}")
+
+                st.dataframe(df[['DISPENSED_DATE', 'PRODUCT_NAME', 'COLOR_NAME', 'WANTED_AMOUNT', 'ACTUAL_TOTAL', 'PRICE']].head(10), use_container_width=True)
+
+            # --- NÚT KÍCH HOẠT ---
+            if st.button("🚀 XÁC NHẬN IMPORT VÀO AI CLOUD", use_container_width=True, type="primary"):
+                with st.status("Đang chuẩn bị dữ liệu cho AI Engine..."):
+                    # Chỉ lọc lấy các cột quan trọng để tối ưu bộ nhớ Supabase
+                    import_df = pd.DataFrame({
+                        'machine_id': selected_target,
+                        'dispensed_date': pd.to_datetime(df['DISPENSED_DATE']).dt.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                        'color_name': df['COLOR_NAME'],
+                        'product_name': df['PRODUCT_NAME'],
+                        'wanted_amount': df['WANTED_AMOUNT'],
+                        'actual_amount': df['ACTUAL_TOTAL'],
+                        'error_gap': df['ERROR_GAP'],
+                        'price': df['PRICE'],
+                        'duration_ms': df[[c for c in df.columns if 'DURATION_MILLISECONDS' in c]].sum(axis=1)
+                    })
+                    
+                    # Chuyển đổi sang dict để insert
+                    data_to_insert = import_df.to_dict(orient='records')
+                    
+                    # Insert theo lô (tránh quá tải API)
+                    batch_size = 100
+                    for i in range(0, len(data_to_insert), batch_size):
+                        sb.table("color_mix_logs").insert(data_to_insert[i:i+batch_size]).execute()
+                
+                st.success(f"Đã nạp thành công {len(df)} bản ghi cho máy {selected_target}!")
+                st.balloons()
+                time.sleep(1)
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"❌ Lỗi định dạng file: {str(e)}")
+            st.warning("Vui lòng kiểm tra lại file CSV có đúng định dạng của máy pha màu không.")
+
+# --- Đừng quên thêm gọi hàm này vào tab tương ứng ở phần điều hướng chính ---
+# with t_import:
+#     render_import_portal(sb)
 # --- DATA ENGINE ---
 def load_all_data():
     try:
