@@ -310,15 +310,22 @@ def render_ai_strategic_hub_v3(df_d, now_dt, sb):
             with st.spinner("AI đang truy vấn Memory..."):
                 # Sau này sẽ kết nối với Layer 4 LLM thực thụ
                 st.chat_message("assistant").write(f"Dựa trên Snapshot lúc {latest['created_at']}, rủi ro tăng do có cụm {latest['new_offline_1h']} máy mới ngắt kết nối đồng loạt.")
-    with t_ai:
+   # --- PHẦN GỌI TAB TRONG APP CHÍNH ---
+with t_ai:
+    # PHẢI THỤT VÀO 1 TAB TỪ ĐÂY
     if not df_d.empty:
         # Lấy now_dt chuẩn theo timezone của dữ liệu
         try:
-            now_dt_aware = datetime.now(df_d['last_seen_dt'].dt.tz[0])
-        except:
+            # Kiểm tra xem cột last_seen_dt đã tồn tại chưa (đã được xử lý ở bước Feature Engineering chưa)
+            if 'last_seen_dt' not in df_d.columns:
+                df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
+            
+            now_dt_aware = datetime.now(timezone.utc)
+        except Exception as e:
             now_dt_aware = datetime.now(timezone.utc)
             
-        render_ai_strategic_hub(df_d, now_dt_aware)
+        # Gọi hàm render đã hợp nhất (V3 Hybrid)
+        render_ai_strategic_hub_v3(df_d, now_dt_aware, sb)
     else:
         st.info("Đang tải dữ liệu từ trung tâm...")
 with t_sys:
