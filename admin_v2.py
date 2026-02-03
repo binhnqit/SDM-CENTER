@@ -271,6 +271,13 @@ def render_ai_strategic_hub(df_d, now_dt):
         st.markdown("#### 💬 Trợ lý Ops Intelligence")
         st.text_input("Hỏi AI về dữ liệu vận hành:", placeholder="Tại sao Risk Score hôm nay lại tăng?")
         st.caption("Trợ lý sẽ phân tích bảng Features và Snapshot để trả lời sếp.")
+    with t_ai:
+    # Gọi hàm xử lý AI đã định nghĩa ở trên
+    # Truyền vào df_d (dữ liệu máy) và now_dt (thời gian hiện tại)
+    if not df_d.empty:
+        render_ai_strategic_hub(df_d, now_dt)
+    else:
+        st.info("Chưa có dữ liệu thiết bị để phân tích AI.")
 with t_sys:
     st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
     col1, col2 = st.columns(2)
