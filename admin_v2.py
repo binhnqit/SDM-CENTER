@@ -248,36 +248,7 @@ class AI_Engine_v3:
         return {"total": total, "offline_ratio": offline_ratio, "avg_off": avg_off, "new_1h": new_off_1h, "jitter": jitter}
 
     @staticmethod
-  def render_import_portal(sb):
-    # ... (giữ phần UI cũ)
-    if uploaded_file is not None:
-        try:
-            df = pd.read_csv(uploaded_file)
-            
-            # --- CHIẾN THUẬT QUÉT DỮ LIỆU 4ORANGES ---
-            # Tìm tất cả các cột bắt đầu bằng 'LINES_DISPENSED_AMOUNT' (1, 2, 3...)
-            dispensed_cols = [c for c in df.columns if 'LINES_DISPENSED_AMOUNT' in c]
-            duration_cols = [c for c in df.columns if 'DURATION_MILLISECONDS' in c]
-            
-            # Tính tổng sản lượng thực tế pha được của tất cả các line
-            df['ACTUAL_TOTAL'] = df[dispensed_cols].fillna(0).sum(axis=1)
-            
-            # Tính tổng thời gian máy chạy (ms) để AI dự báo sức khỏe bơm
-            df['TOTAL_DURATION'] = df[duration_cols].fillna(0).sum(axis=1)
-            
-            # Tính sai số tuyệt đối so với công thức (WANTED_AMOUNT)
-            df['ERROR_GAP'] = (df['WANTED_AMOUNT'] - df['ACTUAL_TOTAL']).abs()
-            
-            # Hiển thị số liệu "nóng" cho sếp xem trước
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Tổng mẻ pha", len(df))
-            c2.metric("Sản lượng thực", f"{df['ACTUAL_TOTAL'].sum():,.2f} L")
-            c3.metric("Doanh số (VND)", f"{df['PRICE'].sum():,.0f}")
-            c4.metric("Độ chính xác AI", f"{100 - (df['ERROR_GAP'].mean()*100):.2f}%")
-
-            st.dataframe(df[['DISPENSED_DATE', 'COLOR_NAME', 'PRODUCT_NAME', 'WANTED_AMOUNT', 'ACTUAL_TOTAL', 'ERROR_GAP']].head(10))
-            
-            # ... (Phần nút bấm Insert vào Supabase giữ nguyên)
+  
     def run_snapshot(sb, features):
         score = (features['offline_ratio'] * 40 + min(features['avg_off'] / 1440, 1.0) * 30 + min(features['new_1h'] / (features['total'] * 0.1 + 1), 1.0) * 30)
         level = "Stable" if score < 20 else "Attention" if score < 45 else "Warning" if score < 70 else "Critical"
