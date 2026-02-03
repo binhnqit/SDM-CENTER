@@ -254,7 +254,37 @@ class AI_Engine_v3:
         data = {"risk_score": round(score, 2), "risk_level": level, "total_devices": features['total'], "offline_ratio": round(features['offline_ratio'], 3), "avg_offline_minutes": round(features['avg_off'], 1), "new_offline_1h": features['new_1h'], "heartbeat_jitter": round(features['jitter'], 3)}
         sb.table("ai_snapshots").insert(data).execute()
         return data
+def render_import_portal(sb):
+    st.subheader("📥 AI Color Mix Data Portal")
+    uploaded_file = st.file_uploader("Chọn file DispenseHistory.csv", type=['csv'])
 
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+        
+        # --- TIỀN XỬ LÝ DỮ LIỆU (DATA CLEANING) ---
+        # AI sẽ tổng hợp Actual Amount từ các Line thành phần
+        lines_amount = [col for col in df.columns if 'LINES_DISPENSED_AMOUNT' in col]
+        df['actual_total'] = df[lines_amount].sum(axis=1)
+        
+        # Tính toán sai số (Error Gap)
+        df['error_gap'] = abs(df['WANTED_AMOUNT'] - df['actual_total'])
+        
+        st.write(f"✅ Đã nhận diện: {len(df)} bản ghi pha màu.")
+        
+        if st.button("🚀 XÁC NHẬN IMPORT VÀO AI ENGINE"):
+            # Chuyển đổi để đẩy lên Supabase
+            # Chỉ lấy các cột chiến lược để tránh làm nặng DB
+            clean_df = df[[
+                'DISPENSED_DATE', 'COLOR_NAME', 'PRODUCT_NAME', 
+                'WANTED_AMOUNT', 'actual_total', 'error_gap', 'PRICE'
+            ]].copy()
+            
+            # Gắn machine_id (Ví dụ sếp chọn từ danh sách hoặc lấy từ file)
+            data_to_db = clean_df.to_dict(orient='records')
+            
+            with st.spinner("AI đang học dữ liệu..."):
+                sb.table("color_mix_logs").insert(data_to_db).execute()
+                st.success("Dữ liệu đã được nạp vào Memory Layer của AI!")
 # --- HÀM RENDER (GIỮ NGUYÊN GIAO DIỆN APPLE) ---
 def render_ai_strategic_hub_v3(df_d, now_dt, sb):
     features = AI_Engine_v3.calculate_features(df_d, now_dt)
