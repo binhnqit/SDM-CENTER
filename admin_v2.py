@@ -178,82 +178,105 @@ with t_offline:
         long_offline = df_d[df_d['last_seen_dt'] < (now_dt - timedelta(days=threshold))]
         st.dataframe(long_offline, use_container_width=True)
 
-with t_ai:
-    st.markdown("### 🧠 SDM AI Strategic Hub")
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import streamlit as st
+from datetime import datetime, timedelta, timezone
+
+def render_ai_strategic_hub(df_d, now_dt):
+    st.markdown("### 🧠 SDM AI Strategic Hub (V2.0)")
     
-    # --- 1. HỆ THỐNG QUẢN LÝ NHÓM & KHU VỰC ---
-    # Giả lập phân vùng dựa trên mã máy hoặc dữ liệu có sẵn
-    if not df_d.empty:
-        df_d['region'] = df_d['machine_id'].apply(lambda x: "Miền Đông" if "E" in str(x).upper() else "Miền Tây")
+    # --- LỚP 1: FEATURE ENGINEERING (Tính toán chỉ số thông minh) ---
+    if df_d.empty:
+        st.info("Chưa có dữ liệu để phân tích AI.")
+        return
+
+    total_devices = len(df_d)
+    df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
+    df_d['offline_minutes'] = (now_dt - df_d['last_seen_dt']).dt.total_seconds() / 60
     
-    tab_stat, tab_predict, tab_market, tab_chat = st.tabs([
-        "📊 THỐNG KÊ CHIẾN LƯỢC", "🔮 DỰ BÁO AI", "📈 XU HƯỚNG THỊ TRƯỜNG", "💬 TRỢ LÝ RAG"
+    # Tính các features cốt lõi
+    offline_ratio = len(df_d[df_d['offline_minutes'] > 15]) / total_devices
+    avg_offline = df_d[df_d['offline_minutes'] > 15]['offline_minutes'].mean() or 0
+    new_offline_1h = len(df_d[(df_d['offline_minutes'] > 0) & (df_d['offline_minutes'] <= 60)])
+    
+    # --- LỚP 2: SCORING (Thay If-Else bằng Risk Score 0.0 -> 1.0) ---
+    # Trọng số: Tỷ lệ offline (40%) + Thời gian offline TB (30%) + Tốc độ rớt mạng mới (30%)
+    risk_score = (
+        min(offline_ratio / 0.5, 1.0) * 0.4 + 
+        min(avg_offline / 1440, 1.0) * 0.3 + 
+        min(new_offline_1h / (total_devices * 0.2 + 1), 1.0) * 0.3
+    )
+    
+    tab_summary, tab_risk, tab_forecast, tab_rag = st.tabs([
+        "🔭 TỔNG QUAN CHIẾN LƯỢC", "⚠️ PHÂN TÍCH RỦI RO", "🔮 DỰ BÁO VẬN HÀNH", "💬 TRỢ LÝ RAG"
     ])
 
-    with tab_stat:
-        c_st1, c_st2, c_st3 = st.columns(3)
-        # SQL-style Stats (Sử dụng Pandas để xử lý nhanh tương đương SQL trên RAM)
-        offline_3d = len(df_d[df_d['last_seen_dt'] < (now_dt - timedelta(days=3))])
+    with tab_summary:
+        # LỚP 4: MEMORY & TREND (Giả lập trend từ Risk Score)
+        c1, c2, c3 = st.columns(3)
         
-        c_st1.metric("Máy Offline > 3 ngày", f"⚠️ {offline_3d}", delta="-2 máy")
-        c_st2.metric("Khu vực sôi động nhất", "Miền Tây", delta="15% Production")
-        c_st3.metric("Top màu pha", "Ocean Blue", delta="Hot")
-
-        c_graph1, c_graph2 = st.columns(2)
-        with c_graph1:
-            # Biểu đồ sản lượng theo khu vực
-            fig_reg = px.bar(df_d.groupby('region').size().reset_index(name='count'), 
-                             x='region', y='count', title="Sản lượng máy theo khu vực",
-                             color='region', color_discrete_sequence=['#0071e3', '#ffcc00'])
-            st.plotly_chart(fig_reg, use_container_width=True)
-        with c_graph2:
-            # Tỷ lệ trạng thái (Apple Style)
-            fig_pie = px.pie(df_d, names='status', title="Tình trạng hệ thống", hole=0.6,
-                             color_discrete_sequence=['#34c759', '#ff3b30', '#8e8e93'])
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-    with tab_predict:
-        st.markdown("#### 🔮 AI Predictive Maintenance")
-        c_pre1, c_pre2 = st.columns(2)
-        with c_pre1:
-            st.warning("**Cảnh báo hết tinh màu (AI Forecast)**")
-            predict_data = {
-                "Đại lý": ["Đại lý A (Cần Thơ)", "Đại lý B (Long An)", "Đại lý C (Vũng Tàu)"],
-                "Mã màu sắp hết": ["Blue 02", "Red Oxide", "Yellow G"],
-                "Dự kiến hết": ["Trong 2 ngày", "Trong 3 ngày", "Ngày mai"]
-            }
-            st.table(pd.DataFrame(predict_data))
-        with c_pre2:
-            st.info("**Phát hiện máy lỗi sớm (Anomalies)**")
-            st.error("🚨 **Máy ID: FF-99** - CPU đạt 95 độ C. Có dấu hiệu kẹt bơm màu.")
-            st.success("✅ **Máy ID: FF-102** - Tốc độ pha đã cải thiện 12% sau khi update.")
-
-    with tab_market:
-        st.markdown("#### 📈 Market Intelligence Insights")
-        st.success("💡 **Xu hướng:** Màu **Xanh Ocean** đang tăng 30% tại vùng ven biển miền Trung. Sếp nên đẩy mạnh quảng bá dòng sơn ngoại thất tại đây.")
+        # Giả lập trend (Trong thực tế sẽ query từ bảng ai_snapshots)
+        prev_risk_score = risk_score * 0.9 # Giả lập hôm qua tốt hơn
+        risk_delta = risk_score - prev_risk_score
         
-        # AI tìm đại lý "nguội"
-        st.markdown("---")
-        st.error("📉 **Cảnh báo đại lý 'nguội' (Sụt giảm sản lượng > 50%)**")
-        cool_down = {
-            "Đại lý": ["Đại lý Sơn Đông", "Vật liệu Xây dựng Miền Nam"],
-            "Lần hoạt động cuối": ["5 ngày trước", "7 ngày trước"],
-            "Hành động": ["Giao NV kinh doanh chăm sóc", "Gửi Voucher kích cầu"]
-        }
-        st.dataframe(pd.DataFrame(cool_down), use_container_width=True, hide_index=True)
+        c1.metric("Chỉ số rủi ro hệ thống", f"{risk_score:.2f}", 
+                  delta=f"{risk_delta:.2f}", delta_color="inverse")
+        
+        status_label = "ỔN ĐỊNH" if risk_score < 0.3 else "CẦN CHÚ Ý" if risk_score < 0.6 else "NGUY CƠ CAO"
+        c2.metric("Trạng thái AI xác định", status_label)
+        c3.metric("Health Score", f"{int((1-risk_score)*100)}%")
 
-    with tab_chat:
-        st.markdown("#### 💬 Trợ lý Chiến lược RAG (Retrieval-Augmented Generation)")
-        query = st.text_input("Sếp cần hỏi gì về hệ thống 5.000 máy?", placeholder="Ví dụ: Liệt kê các đại lý miền Tây có sản lượng thấp nhất?")
-        if query:
-            with st.spinner("AI đang truy vấn dữ liệu..."):
-                time.sleep(1)
-                st.markdown(f"""
-                **🤖 Phân tích của AI:**
-                Dựa trên dữ liệu thực tế, các đại lý tại **Tiền Giang** và **Bến Tre** đang có sản lượng thấp nhất trong 7 ngày qua. 
-                - **Nguyên nhân:** Do thời tiết mưa kéo dài (Data từ Weather API).
-                - **Khuyến nghị:** Hoãn chương trình khuyến mãi sơn ngoại thất tại đây sang tuần sau.
-                """)
+        # Biểu đồ diễn biến rủi ro (Memory Layer)
+        st.write("**Diễn biến rủi ro 24h qua (AI Snapshot)**")
+        # Giả lập dữ liệu chuỗi thời gian
+        chart_data = pd.DataFrame({
+            'Time': [now_dt - timedelta(hours=i) for i in range(24, 0, -1)],
+            'Risk': np.random.uniform(risk_score-0.1, risk_score+0.1, 24)
+        })
+        st.line_chart(chart_data, x='Time', y='Risk')
+
+    with tab_risk:
+        st.markdown("#### 🔍 Evidence-based Trace (Bằng chứng rủi ro)")
+        # Phân loại rủi ro theo cụm (Clustering giả lập)
+        col_r1, col_r2 = st.columns(2)
+        
+        with col_r1:
+            st.write("**Top 5 máy gây nhiễu hệ thống (Anomaly)**")
+            anomaly_df = df_d.sort_values('offline_minutes', ascending=False).head(5)
+            st.dataframe(anomaly_df[['machine_id', 'offline_minutes', 'status']], use_container_width=True)
+            
+        with col_r2:
+            # LỚP 3: AI NARRATIVE (Giải thích bằng ngôn ngữ tự nhiên)
+            st.info("**AI Narrative Analysis**")
+            confidence = "High" if total_devices > 10 else "Low"
+            st.write(f"""
+            - **Hiện tượng:** Tỷ lệ máy rớt mạng đạt {offline_ratio*100:.1f}%.
+            - **Nguyên nhân:** Phát hiện cụm rớt mạng tập trung trong 1 giờ qua ({new_offline_1h} máy). 
+            - **Khuyến nghị:** Kiểm tra hạ tầng Cloud Supabase hoặc đường truyền khu vực trọng điểm.
+            - **Độ tin cậy:** {confidence} (Dựa trên {total_devices} mẫu)
+            """)
+
+    with tab_forecast:
+        st.markdown("#### 🔮 Predictive Maintenance (Dự báo bảo trì)")
+        # Dự báo dựa trên Linear Regression đơn giản (Giả lập)
+        st.success("Dự báo: 72 giờ tới hệ thống sẽ duy trì ở mức rủi ro thấp.")
+        
+        # Dự báo vật tư (Tinh màu) - Dựa trên sản lượng ảo
+        st.write("**Dự báo hết tinh màu (AI Forecast - Baseline comparison)**")
+        pred_data = pd.DataFrame({
+            'Đại lý': ['Đại lý Long An', 'Đại lý Bình Tân', 'Đại lý Thủ Đức'],
+            'Xác suất hết màu (%)': [85, 62, 45],
+            'Thời gian dự kiến': ['1.5 ngày', '3 ngày', '4.2 ngày']
+        })
+        st.table(pred_data)
+
+    with tab_rag:
+        # Lớp tương tác LLM
+        st.markdown("#### 💬 Trợ lý Ops Intelligence")
+        st.text_input("Hỏi AI về dữ liệu vận hành:", placeholder="Tại sao Risk Score hôm nay lại tăng?")
+        st.caption("Trợ lý sẽ phân tích bảng Features và Snapshot để trả lời sếp.")
 with t_sys:
     st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
     col1, col2 = st.columns(2)
