@@ -313,131 +313,64 @@ class AI_Engine_v3:
     def calculate_features(df_d, now_dt):
         total = len(df_d)
         if total == 0: return None
+        
+        # Đảm bảo có cột last_seen_dt chuẩn hóa
         if 'last_seen_dt' not in df_d.columns:
             df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
         
+        # Tính số phút offline
         df_d['off_min'] = (now_dt - df_d['last_seen_dt']).dt.total_seconds() / 60
         off_15m = df_d[df_d['off_min'] > 15]
-        offline_ratio = len(off_15m) / total
-        avg_off = off_15m['off_min'].mean() if not off_15m.empty else 0
-        new_off_1h = len(df_d[(df_d['off_min'] > 0) & (df_d['off_min'] <= 60)])
-        jitter = np.random.uniform(0.05, 0.15) 
-        return {"total": total, "offline_ratio": offline_ratio, "avg_off": avg_off, "new_1h": new_off_1h, "jitter": jitter}
+        
+        features = {
+            "total": total,
+            "offline_ratio": len(off_15m) / total,
+            "avg_off": off_15m['off_min'].mean() if not off_15m.empty else 0,
+            "new_1h": len(df_d[(df_d['off_min'] > 0) & (df_d['off_min'] <= 60)]),
+            "jitter": np.random.uniform(0.05, 0.15) 
+        }
+        return features
 
     @staticmethod
     def run_snapshot(sb, features):
-        score = (features['offline_ratio'] * 40 + min(features['avg_off'] / 1440, 1.0) * 30 + min(features['new_1h'] / (features['total'] * 0.1 + 1), 1.0) * 30)
+        # Thuật toán tính Risk Score của 4Oranges
+        score = (features['offline_ratio'] * 40 + 
+                 min(features['avg_off'] / 1440, 1.0) * 30 + 
+                 min(features['new_1h'] / (features['total'] * 0.1 + 1), 1.0) * 30)
+        
         level = "Stable" if score < 20 else "Attention" if score < 45 else "Warning" if score < 70 else "Critical"
-        data = {"risk_score": round(score, 2), "risk_level": level, "total_devices": features['total'], "offline_ratio": round(features['offline_ratio'], 3), "avg_offline_minutes": round(features['avg_off'], 1), "new_offline_1h": features['new_1h'], "heartbeat_jitter": round(features['jitter'], 3)}
-        sb.table("ai_snapshots").insert(data).execute()
-        return data
-def render_import_portal(sb):
-    st.subheader("📥 AI Color Mix Data Portal")
-    uploaded_file = st.file_uploader("Chọn file DispenseHistory.csv", type=['csv'])
-
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
         
-        # --- TIỀN XỬ LÝ DỮ LIỆU (DATA CLEANING) ---
-        # AI sẽ tổng hợp Actual Amount từ các Line thành phần
-        lines_amount = [col for col in df.columns if 'LINES_DISPENSED_AMOUNT' in col]
-        df['actual_total'] = df[lines_amount].sum(axis=1)
-        
-        # Tính toán sai số (Error Gap)
-        df['error_gap'] = abs(df['WANTED_AMOUNT'] - df['actual_total'])
-        
-        st.write(f"✅ Đã nhận diện: {len(df)} bản ghi pha màu.")
-        
-        if st.button("🚀 XÁC NHẬN IMPORT VÀO AI ENGINE"):
-            # Chuyển đổi để đẩy lên Supabase
-            # Chỉ lấy các cột chiến lược để tránh làm nặng DB
-            clean_df = df[[
-                'DISPENSED_DATE', 'COLOR_NAME', 'PRODUCT_NAME', 
-                'WANTED_AMOUNT', 'actual_total', 'error_gap', 'PRICE'
-            ]].copy()
-            
-            # Gắn machine_id (Ví dụ sếp chọn từ danh sách hoặc lấy từ file)
-            data_to_db = clean_df.to_dict(orient='records')
-            
-            with st.spinner("AI đang học dữ liệu..."):
-                sb.table("color_mix_logs").insert(data_to_db).execute()
-                st.success("Dữ liệu đã được nạp vào Memory Layer của AI!")
-# --- HÀM RENDER (GIỮ NGUYÊN GIAO DIỆN APPLE) ---
-class AI_Engine_v3:
-    @staticmethod
-    def calculate_features(df_d, now_dt):
-        total = len(df_d)
-        if total == 0: return None
-        if 'last_seen_dt' not in df_d.columns:
-            df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
-        
-        df_d['off_min'] = (now_dt - df_d['last_seen_dt']).dt.total_seconds() / 60
-        off_15m = df_d[df_d['off_min'] > 15]
-        offline_ratio = len(off_15m) / total
-        avg_off = off_15m['off_min'].mean() if not off_15m.empty else 0
-        new_off_1h = len(df_d[(df_d['off_min'] > 0) & (df_d['off_min'] <= 60)])
-        jitter = np.random.uniform(0.05, 0.15) 
-        return {"total": total, "offline_ratio": offline_ratio, "avg_off": avg_off, "new_1h": new_off_1h, "jitter": jitter}
-
-    @staticmethod
-    def run_snapshot(sb, features):
-        score = (features['offline_ratio'] * 40 + min(features['avg_off'] / 1440, 1.0) * 30 + min(features['new_1h'] / (features['total'] * 0.1 + 1), 1.0) * 30)
-        level = "Stable" if score < 20 else "Attention" if score < 45 else "Warning" if score < 70 else "Critical"
-        data = {"risk_score": round(score, 2), "risk_level": level, "total_devices": features['total'], "offline_ratio": round(features['offline_ratio'], 3), "avg_offline_minutes": round(features['avg_off'], 1), "new_offline_1h": features['new_1h'], "heartbeat_jitter": round(features['jitter'], 3)}
+        data = {
+            "risk_score": round(score, 2),
+            "risk_level": level,
+            "total_devices": features['total'],
+            "offline_ratio": round(features['offline_ratio'], 3),
+            "avg_offline_minutes": round(features['avg_off'], 1),
+            "new_offline_1h": features['new_1h'],
+            "heartbeat_jitter": round(features['jitter'], 3)
+        }
         sb.table("ai_snapshots").insert(data).execute()
         return data
 
-def render_import_portal(sb):
-    st.markdown("""
-        <div style="background-color: #0071e3; padding: 20px; border-radius: 15px; color: white; margin-bottom: 20px;">
-            <h2 style="margin:0;">📥 AI Data Port</h2>
-            <p style="margin:0; opacity: 0.8;">Hệ thống nạp dữ liệu lịch sử pha màu (DispenseHistory.csv)</p>
-        </div>
-    """, unsafe_allow_html=True)
+# --- TÍCH HỢP VÀO TAB AI ---
+def render_ai_tab(df_d, sb):
+    now_dt_aware = datetime.now(timezone.utc)
+    
+    # Sidebar: Nút chụp ảnh hệ thống
+    if st.sidebar.button("📸 Capture AI Snapshot"):
+        with st.spinner("AI đang phân quét toàn hệ thống..."):
+            feats = AI_Engine_v3.calculate_features(df_d, now_dt_aware)
+            AI_Engine_v3.run_snapshot(sb, feats)
+            st.toast("Đã lưu Snapshot thành công!")
+            time.sleep(0.5)
+            st.rerun()
 
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.info("💡 **Hướng dẫn:** Tải file .csv để AI phân tích sản lượng và lỗi kỹ thuật.")
-        res_dev = sb.table("devices").select("machine_id").execute()
-        list_machines = [d['machine_id'] for d in res_dev.data] if res_dev.data else ["Unknown"]
-        selected_target = st.selectbox("🎯 Gán dữ liệu cho máy:", list_machines, key="import_target")
-        uploaded_file = st.file_uploader("Kéo thả file .csv vào đây", type=['csv'])
+    # Hiển thị Dashboard AI
+    render_ai_strategic_hub_v3(df_d, now_dt_aware, sb)
 
-    if uploaded_file is not None:
-        try:
-            df = pd.read_csv(uploaded_file)
-            with c2:
-                st.write("🔍 **Xem trước dữ liệu:**")
-                line_cols = [c for c in df.columns if 'LINES_DISPENSED_AMOUNT' in c]
-                df['ACTUAL_TOTAL'] = df[line_cols].fillna(0).sum(axis=1)
-                df['ERROR_GAP'] = (df['WANTED_AMOUNT'] - df['ACTUAL_TOTAL']).abs()
-                
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Tổng mẻ pha", len(df))
-                m2.metric("Doanh số", f"{df['PRICE'].sum():,.0f} VND")
-                m3.metric("Sai số TB", f"{df['ERROR_GAP'].mean():.4f}")
-                st.dataframe(df[['DISPENSED_DATE', 'PRODUCT_NAME', 'COLOR_NAME', 'WANTED_AMOUNT', 'ACTUAL_TOTAL', 'PRICE']].head(10), use_container_width=True)
-
-            if st.button("🚀 XÁC NHẬN IMPORT VÀO AI CLOUD", use_container_width=True, type="primary"):
-                with st.status("Đang chuẩn bị dữ liệu cho AI Engine..."):
-                    import_df = pd.DataFrame({
-                        'machine_id': selected_target,
-                        'dispensed_date': pd.to_datetime(df['DISPENSED_DATE']).dt.isoformat(),
-                        'color_name': df['COLOR_NAME'],
-                        'product_name': df['PRODUCT_NAME'],
-                        'wanted_amount': df['WANTED_AMOUNT'],
-                        'actual_total': df['ACTUAL_TOTAL'],
-                        'error_gap': df['ERROR_GAP'],
-                        'price': df['PRICE']
-                    })
-                    data_to_insert = import_df.to_dict(orient='records')
-                    batch_size = 100
-                    for i in range(0, len(data_to_insert), batch_size):
-                        sb.table("color_mix_logs").insert(data_to_insert[i:i+batch_size]).execute()
-                st.success(f"Đã nạp thành công {len(df)} bản ghi!")
-                st.balloons(); time.sleep(1); st.rerun()
-        except Exception as e:
-            st.error(f"❌ Lỗi: {str(e)}")
+# --- TÍCH HỢP VÀO TAB IMPORT ---
+def render_import_tab(sb):
+    render_import_portal(sb)
 
 # --- MAIN APP LOGIC ---
 def load_all_data():
