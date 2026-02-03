@@ -116,24 +116,17 @@ with t_ctrl:
 with t_file:
     st.subheader("Phát hành bộ dữ liệu SDF")
     file_up = st.file_uploader("Kéo thả file .SDF", type=['sdf'])
-    # Lấy danh sách máy thực tế đang Online để tránh chọn sai tên
-    if not df_d.empty:
-        active_machines = df_d['machine_id'].unique().tolist()
-    else:
-        active_machines = []
-        
+    active_machines = df_d['machine_id'].unique().tolist() if not df_d.empty else []
     f_targets = st.multiselect("Đại lý nhận mục tiêu:", active_machines)
     
     if st.button("🚀 KÍCH HOẠT ĐỒNG BỘ") and file_up and f_targets:
-        with st.status("Đang xử lý dữ liệu chiến lược..."):
+        with st.status("Đang chuẩn bị gói tin..."):
             encoded = base64.b64encode(zlib.compress(file_up.getvalue())).decode('utf-8')
-            chunk_size = 100000 
-            chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
+            chunks = [encoded[i:i+100000] for i in range(0, len(encoded), 100000)]
             
             for m in f_targets:
-                # Tạo timestamp đồng nhất cho tất cả mảnh của 1 file
-                ts = datetime.now().strftime("%Y%m%d%H%M%S")
-                
+                # SỬA LỖI 1: Batch_ID độc nhất cho mỗi máy để tránh Agent update chồng chéo
+                batch_id = f"{m}_{file_up.name}_{int(time.time())}"
                 payload = []
                 for i, c in enumerate(chunks):
                     payload.append({
@@ -141,43 +134,42 @@ with t_file:
                         "file_name": file_up.name, 
                         "data_chunk": c,
                         "part_info": f"PART_{i+1}/{len(chunks)}", 
-                        "timestamp": ts,
-                        "status": "PENDING" # Ép chữ PENDING vào đây
+                        "timestamp": batch_id, # Dùng batch_id làm timestamp định danh
+                        "status": "PENDING"
                     })
-                
-                # Insert dữ liệu
+                # Insert theo lô 50 bản ghi
                 for j in range(0, len(payload), 50):
                     sb.table("file_queue").insert(payload[j:j+50]).execute()
-            
-            st.success(f"Đã phát hành thành công cho {len(f_targets)} máy!")
-            time.sleep(1)
-            st.rerun()
+            st.success("Đã phát hành lệnh đồng bộ!")
+            time.sleep(1); st.rerun()
 
+# --- TAB TỔNG KẾT (Sửa Lỗi Hiển Thị) ---
 with t_sum:
     st.subheader("📜 Nhật ký vận hành hệ thống")
-    # Lấy cả PENDING và DONE để không bao giờ bị trống
-    res = sb.table("file_queue").select("*").order("timestamp", desc=True).limit(200).execute()
-    
-    if res.data:
-        df = pd.DataFrame(res.data)
-        # Gom nhóm theo timestamp và máy để hiện mỗi file 1 dòng
-        log_df = df.drop_duplicates(subset=['machine_id', 'timestamp'])
+    if not df_f.empty:
+        # SỬA LỖI 2: Ưu tiên trạng thái DONE khi Groupby
+        # Chuyển status về dạng category để sort: DONE sẽ đứng trước PENDING
+        df_f['status_rank'] = df_f['status'].apply(lambda x: 1 if x == "DONE" else 0)
         
-        # Tạo cột trạng thái chuyên nghiệp
-        log_df['Kết quả'] = log_df['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang nhận...")
+        log_df = (
+            df_f.sort_values(by=['status_rank', 'timestamp'], ascending=[False, False])
+            .drop_duplicates(subset=['machine_id', 'timestamp']) # timestamp ở đây chính là batch_id
+        )
+        
+        log_df['Trạng thái'] = log_df['status'].apply(lambda x: "✅ Hoàn tất" if x == "DONE" else "⏳ Đang nhận...")
         
         st.dataframe(
-            log_df[['machine_id', 'file_name', 'timestamp', 'Kết quả']],
+            log_df[['machine_id', 'file_name', 'timestamp', 'Trạng thái']],
             column_config={
                 "machine_id": "Máy trạm",
                 "file_name": "Tên File",
-                "timestamp": "Mã phiên",
-                "Kết quả": st.column_config.TextColumn("Trạng thái")
+                "timestamp": "Mã Batch (ID)",
+                "Trạng thái": st.column_config.TextColumn("Kết quả")
             },
             use_container_width=True, hide_index=True
         )
     else:
-        st.info("Hệ thống sạch sẽ - Chưa có lịch sử truyền file.")
+        st.info("Chưa có lịch sử truyền file.")
 
 with t_offline:
     st.subheader("🕵️ Kiểm soát vắng mặt")
