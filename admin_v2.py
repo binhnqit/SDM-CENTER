@@ -36,7 +36,7 @@ if not st.session_state['authenticated']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.write(""); st.write("") 
-        st.markdown("<div style='text-align: center;'><h1 style='color: #1d1d1f;'>🍎 SDM Secure Pro</h1><p style='color: #86868b;'>Vui lòng nhập mật khẩu quản trị</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center;'><h1 style='color: #1d1d1f;'>🍊🍊🍊🍊 4oranges Secure</h1><p style='color: #86868b;'>Vui lòng nhập mật khẩu quản trị</p></div>", unsafe_allow_html=True)
         pwd = st.text_input("", type="password", placeholder="Password", label_visibility="collapsed")
         if st.button("Đăng nhập", use_container_width=True, type="primary"):
             if pwd == ADMIN_PASSWORD:
@@ -73,7 +73,7 @@ df_d, df_c, df_f = load_all_data()
 # --- HEADER ---
 c_head1, c_head2 = st.columns([3, 1])
 with c_head1:
-    st.title("🍎 4Oranges Lux Management Pro")
+    st.title("🍊🍊🍊🍊 HỆ THỐNG QUẢN LÝ MÁY PHA MÀU 4ORANGES CÓ TÍCH HỢP AI")
     st.caption(f"Hệ thống vận hành thông minh v4.4 | {datetime.now().strftime('%d/%m/%Y')}")
 with c_head2:
     if st.button("Đăng xuất", use_container_width=True):
