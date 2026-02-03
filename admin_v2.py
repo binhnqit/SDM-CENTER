@@ -94,9 +94,56 @@ if not df_d.empty:
     m4.metric("Dung lượng RAM", f"{df_d['ram_usage'].mean():.1f}%")
 
 # --- NAVIGATION TABS ---
-t_mon, t_ctrl, t_file, t_sum, t_offline, t_ai, t_sys = st.tabs([
-    "📊 GIÁM SÁT", "🎮 ĐIỀU KHIỂN", "📤 TRUYỀN FILE", "📜 TỔNG KẾT", "🕵️ TRUY VẾT", "🧠 AI INSIGHT", "⚙️ HỆ THỐNG"
+# --- TRONG PHẦN KHAI BÁO TABS ---
+t_mon, t_ctrl, t_file, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs([
+    "📊 GIÁM SÁT", "🎮 ĐIỀU KHIỂN", "📤 TRUYỀN FILE", "📜 TỔNG KẾT", "🕵️ TRUY VẾT", "🧠 AI INSIGHT", "🔑 QUẢN LÝ TOKEN", "⚙️ HỆ THỐNG"
 ])
+
+# --- NỘI DUNG TAB QUẢN LÝ TOKEN ---
+with t_tokens:
+    st.subheader("🔑 Phê duyệt thiết bị mới (Security Gate)")
+    
+    # Lấy dữ liệu từ bảng device_tokens
+    res_tokens = sb.table("device_tokens").select("*").execute()
+    df_tokens = pd.DataFrame(res_tokens.data)
+
+    if not df_tokens.empty:
+        # Hiển thị danh sách chờ duyệt
+        st.write("**Danh sách thiết bị yêu cầu gia nhập:**")
+        for index, row in df_tokens.iterrows():
+            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+            col1.text(f"ID: {row['machine_id']}")
+            col2.text(f"Token: {row['token'][:10]}...")
+            
+            status = "🟢 Đã duyệt" if row['is_active'] else "🟡 Chờ duyệt"
+            col3.info(status)
+            
+            if not row['is_active']:
+                if col4.button("PHÊ DUYỆT", key=f"app_{row['machine_id']}"):
+                    sb.table("device_tokens").update({"is_active": True}).eq("machine_id", row['machine_id']).execute()
+                    st.success(f"Đã cấp quyền cho {row['machine_id']}")
+                    time.sleep(1); st.rerun()
+            else:
+                if col4.button("THU HỒI", key=f"rev_{row['machine_id']}"):
+                    sb.table("device_tokens").update({"is_active": False}).eq("machine_id", row['machine_id']).execute()
+                    st.warning(f"Đã ngắt quyền {row['machine_id']}")
+                    time.sleep(1); st.rerun()
+    else:
+        st.info("Chưa có thiết bị nào gửi yêu cầu Token.")
+
+    # Phần gán Token thủ công (Nếu sếp muốn cấp trước cho đại lý)
+    with st.expander("➕ Cấp Token thủ công"):
+        new_id = st.text_input("Nhập Machine ID:")
+        new_owner = st.text_input("Tên đại lý:")
+        if st.button("TẠO TOKEN"):
+            new_token = base64.b64encode(os.urandom(24)).decode('utf-8')
+            sb.table("device_tokens").insert({
+                "machine_id": new_id, 
+                "token": new_token, 
+                "assigned_to": new_owner,
+                "is_active": True
+            }).execute()
+            st.success(f"Đã cấp Token cho {new_owner}")
 
 with t_mon:
     st.subheader("Trạng thái thiết bị thời gian thực")
