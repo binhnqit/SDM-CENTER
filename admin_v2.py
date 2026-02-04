@@ -172,8 +172,11 @@ with t_csv:
                 records = []
 
                 for _, row in df_csv.iterrows():
-                    raw_payload = sanitize_for_json(row.to_dict())
-
+                    #raw_payload = sanitize_for_json(row.to_dict())
+                    payload = {
+                        k: (None if pd.isna(v) else v)
+                        for k, v in row.to_dict().items()
+                            }    
                     records.append({
                         "machine_id": raw_payload.get("machine_id"),
                         "event_time": raw_payload.get("dispense_time") or raw_payload.get("timestamp"),
