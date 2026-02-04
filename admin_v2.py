@@ -376,7 +376,7 @@ class AI_Color_Insight_Engine:
         return snapshot
 
     @staticmethod
-       def save_snapshot(sb, snapshot):
+    def save_snapshot(sb, snapshot):
         if snapshot:
             sb.table("ai_color_snapshots").insert(snapshot).execute()
     @staticmethod
