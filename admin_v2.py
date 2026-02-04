@@ -484,12 +484,13 @@ with t_ai:
                 df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
             
             # Sidebar button để chụp ảnh hệ thống
-            if st.sidebar.button("📸 Capture AI Snapshot"):
-                feats = AI_Engine_v3.calculate_features(df_d, now_dt_aware)
-                AI_Engine_v3.run_snapshot(sb, feats)
-                st.toast("Đã lưu Snapshot thành công!")
+            if st.sidebar.button("🎨 Capture Color Learning Snapshot"):
+                df_learn = AI_Color_Insight_Engine.load_learning_data(sb, days=30)
+                snap = AI_Color_Insight_Engine.generate_snapshot(df_learn)
+                AI_Color_Insight_Engine.save_snapshot(sb, snap)
+                st.toast("🎨 AI đã học xong hành vi pha màu!")
                 time.sleep(0.5)
-                st.rerun()
+            st.rerun()
 
             render_ai_strategic_hub_v3(df_d, now_dt_aware, sb)
         except Exception as e:
