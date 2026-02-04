@@ -323,7 +323,7 @@ import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu 
 
 # --- TRƯỚC HẾT: PHẢI CÓ CLASS NÀY THÌ TAB AI MỚI CHẠY ĐƯỢC ---
 class AI_Engine_v3:
-    class AI_Color_Insight_Engine:
+class AI_Color_Insight_Engine:
     @staticmethod
     def load_learning_data(sb, days=30):
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -375,7 +375,7 @@ class AI_Engine_v3:
 
         return snapshot
 
-    @staticmethod
+     @staticmethod
     def save_snapshot(sb, snapshot):
         if snapshot:
             sb.table("ai_color_snapshots").insert(snapshot).execute()
