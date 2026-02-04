@@ -479,32 +479,79 @@ def render_ai_strategic_hub_v3(df_d, now_dt, sb):
 with t_ai:
     if not df_d.empty:
         try:
-            # 1. Chuẩn bị thời gian chuẩn UTC
             now_dt_aware = datetime.now(timezone.utc)
-            
-            # 2. Đảm bảo cột last_seen_dt hợp lệ
             if 'last_seen_dt' not in df_d.columns:
                 df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
             
-            # 3. Nút bấm Snapshot (Nằm trong Sidebar)
-            # Fix: Chỉ rerun KHI bấm nút, không để rerun tự do
+            # 1. Sidebar Control
             if st.sidebar.button("🎨 Capture Color Learning Snapshot"):
-                with st.spinner("AI đang học dữ liệu pha màu..."):
+                with st.spinner("AI đang phân tích dữ liệu pha màu..."):
                     df_learn = AI_Color_Insight_Engine.load_learning_data(sb, days=30)
                     snap = AI_Color_Insight_Engine.generate_snapshot(df_learn)
                     AI_Color_Insight_Engine.save_snapshot(sb, snap)
                     st.toast("🎨 AI đã học xong hành vi pha màu!")
                     time.sleep(1)
-                    st.rerun() # Chỉ rerun khi đã xử lý xong nút bấm
+                    st.rerun()
 
-            # 4. Hiển thị Dashboard AI
+            # 2. Render Strategic Hub (Phần cũ)
             render_ai_strategic_hub_v3(df_d, now_dt_aware, sb)
-            
+
+            st.write("---") # Đường kẻ phân cách cho đẹp
+
+            # 3. PHẦN CODE MỚI CỦA SẾP: AI Learning Insights
+            st.markdown("## 🎨 AI Learning – Hành vi pha màu")
+
+            # Truy vấn Snapshot màu mới nhất
+            # Lưu ý: Sửa 'generated_at' thành 'created_at' nếu sếp dùng cột mặc định của Supabase
+            res = (
+                sb.table("ai_color_snapshots")
+                  .select("*")
+                  .order("id", desc=True) # Sếp dùng 'id' hoặc 'created_at' để lấy bản mới nhất
+                  .limit(1)
+                  .execute()
+            )
+
+            if res.data:
+                snap = res.data[0]
+                c_ai1, c_ai2 = st.columns(2)
+
+                with c_ai1:
+                    st.markdown("**🏆 Top màu pha nhiều nhất**")
+                    if "top_colors" in snap and snap["top_colors"]:
+                        df_top_colors = pd.DataFrame(snap["top_colors"])
+                        # Vẽ biểu đồ bar cho sinh động luôn sếp nhé
+                        fig_colors = px.bar(df_top_colors, x='color_code', y='mix_count', 
+                                            color='mix_count', color_continuous_scale='Blues')
+                        st.plotly_chart(fig_colors, use_container_width=True)
+                        st.dataframe(df_top_colors, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Chưa có dữ liệu màu.")
+
+                with c_ai2:
+                    st.markdown("**🧪 Top tinh màu tiêu thụ**")
+                    if "top_pigments" in snap and snap["top_pigments"]:
+                        df_top_pig = pd.DataFrame(snap["top_pigments"])
+                        fig_pig = px.pie(df_top_pig, names='pigment_code', values='volume', hole=0.4)
+                        st.plotly_chart(fig_pig, use_container_width=True)
+                        st.dataframe(df_top_pig, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Chưa có dữ liệu tinh màu.")
+
+                st.markdown("**📊 Thống kê sử dụng hệ thống**")
+                # Hiển thị dạng Metric cho giống phong cách Apple
+                if "usage_stats" in snap:
+                    u1, u2, u3 = st.columns(3)
+                    stats = snap["usage_stats"]
+                    u1.metric("Tổng dung lượng (Lít)", f"{stats.get('total_volume', 0):.2f}")
+                    u2.metric("Trung bình/Lần pha", f"{stats.get('avg_volume_per_mix', 0):.2f}")
+                    u3.metric("Tổng số bản ghi AI", snap.get("total_records", 0))
+            else:
+                st.info("Chưa có snapshot màu – hãy nhấn 'Capture' ở Sidebar để bắt đầu học.")
+
         except Exception as e:
-            st.error(f"Lỗi vận hành AI Engine: {e}")
-            st.info("Gợi ý: Kiểm tra xem bảng 'ai_snapshots' đã có dữ liệu chưa.")
+            st.error(f"Lỗi AI Insight: {e}")
     else:
-        st.info("Đang tải dữ liệu từ trung tâm... Vui lòng đợi trong giây lát.")
+        st.info("Đang kết nối với trung tâm dữ liệu...")
 with t_sys:
     st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
     col1, col2 = st.columns(2)
