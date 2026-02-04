@@ -403,12 +403,11 @@ with t_ctrl:
 with t_file:
     # 1️⃣ HEADER
     st.markdown("## 📦 Deployment Center")
-    st.caption("Quản lý Artifacts và triển khai file cấu hình/firmware tới hệ thống máy pha màu.")
-    # --- TRONG BƯỚC 1: UPLOAD ARTIFACT ---
+    st.caption("Hệ thống quản lý Artifacts và điều phối triển khai đa mục tiêu.")
 
-    # 2️⃣ UPLOAD ARTIFACT
-    with st.expander("⬆️ Bước 1: Upload Artifact (File + Metadata)", expanded=True):
-        file = st.file_uploader("Chọn file triển khai", type=["bin", "zip", "json", "cfg", "sdf"])
+    # 2️⃣ UPLOAD ARTIFACT (BƯỚC 1 - ĐÃ CẢI TIẾN)
+    with st.expander("⬆️ Bước 1: Upload & Đóng gói Artifact", expanded=not st.session_state.get("current_artifact_id")):
+        file = st.file_uploader("Chọn file triển khai (Max 50MB cho DB chunk)", type=["bin", "zip", "json", "cfg", "sdf"])
         
         c_art1, c_art2, c_art3 = st.columns(3)
         with c_art1:
@@ -416,123 +415,145 @@ with t_file:
         with c_art2:
             version = st.text_input("Version", placeholder="v1.2.3")
         with c_art3:
-            deploy_mode = st.radio("Deploy mode", ["Rolling", "All-at-once"], horizontal=True)
-
-        artifact_id = st.session_state.get("current_artifact_id", None)
+            deploy_mode = st.radio("Chế độ truyền", ["Rolling", "All-at-once"], horizontal=True)
 
         if file and version:
-            if st.button("📥 Lưu & Đóng gói Artifact", type="primary", use_container_width=True):
-                file_bytes = file.getvalue()
-                checksum = hashlib.sha256(file_bytes).hexdigest()
-                size_kb = round(len(file_bytes) / 1024, 2)
-                
-                # Encode file để lưu (Sếp có thể lưu vào Storage, ở đây tôi lưu metadata)
-                # Lưu ý: Với file lớn, nên dùng Supabase Storage.
-                res = sb.table("artifacts").insert({
-                    "file_name": file.name,
-                    "file_type": file_type,
-                    "version": version,
-                    "checksum": checksum,
-                    "size": size_kb
-                }).execute()
-                
-                if res.data:
-                    st.session_state["current_artifact_id"] = res.data[0]["id"]
-                    st.success(f"✅ Đã lưu Artifact: {file.name} ({version})")
-                    st.rerun()
+            if st.button("📥 BẮT ĐẦU ĐÓNG GÓI & TRUYỀN DATA", type="primary", use_container_width=True):
+                with st.status("📦 Đang xử lý Artifact...") as status:
+                    # Đọc bytes
+                    file_bytes = file.getvalue()
+                    
+                    # Tính toán Metadata
+                    st.write("🔍 Đang tính toán Checksum SHA256...")
+                    checksum = hashlib.sha256(file_bytes).hexdigest()
+                    size_kb = round(len(file_bytes) / 1024, 2)
+                    
+                    # Nén và Mã hóa (Đảm bảo Agent V15 giải mã được)
+                    st.write("🗜️ Đang nén dữ liệu (zlib)...")
+                    compressed_data = zlib.compress(file_bytes)
+                    st.write("🔐 Đang mã hóa Base64...")
+                    b64_data = base64.b64encode(compressed_data).decode('utf-8')
+                    
+                    # Insert vào Supabase
+                    st.write("🚀 Đang đẩy dữ liệu lên hệ thống...")
+                    res = sb.table("artifacts").insert({
+                        "file_name": file.name,
+                        "file_type": file_type,
+                        "version": version,
+                        "checksum": checksum,
+                        "size": size_kb,
+                        "data_chunk": b64_data  # Gửi file trực tiếp vào DB
+                    }).execute()
+                    
+                    if res.data:
+                        st.session_state["current_artifact_id"] = res.data[0]["id"]
+                        status.update(label="✅ Đã đóng gói Artifact thành công!", state="complete")
+                        st.rerun()
 
-    # 3️⃣ CHỌN TARGET MÁY
+    # HIỂN THỊ TRẠNG THÁI ARTIFACT ĐANG CHỜ
+    curr_id = st.session_state.get("current_artifact_id")
+    if curr_id:
+        st.success(f"📌 Artifact hiện tại: **ID #{curr_id}** đang sẵn sàng để triển khai.")
+        if st.button("❌ Hủy Artifact này"):
+            st.session_state["current_artifact_id"] = None
+            st.rerun()
+
+    # 3️⃣ CHỌN TARGET MÁY (BƯỚC 2)
     st.write("---")
     st.markdown("### 🎯 Bước 2: Chọn máy triển khai")
     
     if not df_d.empty:
-        # Sử dụng df_d có sẵn từ đầu để không phải query lại
         df_m = df_d.copy()
         df_m["select"] = False
         
-        # Sắp xếp lại các cột cho dễ nhìn
-        cols_display = ["select", "User", "machine_id", "monitor_state"]
+        # Chỉ hiển thị các máy READY để tránh lỗi truyền file cho máy đang LOCK
+        cols_display = ["select", "User", "machine_id", "status"]
         edited = st.data_editor(
             df_m[cols_display],
             use_container_width=True,
             hide_index=True,
             column_config={
                 "select": st.column_config.CheckboxColumn("Chọn"),
-                "User": "Đại lý/Người dùng",
-                "machine_id": "Mã máy",
-                "monitor_state": "Trạng thái"
+                "status": "Trạng thái Agent"
             },
-            disabled=["User", "machine_id", "monitor_state"]
+            disabled=["User", "machine_id", "status"]
         )
         
         targets = edited[edited["select"]]["machine_id"].tolist()
-        st.info(f"📍 Đã chọn **{len(targets)}** máy mục tiêu.")
-
-        # 4️⃣ TẠO DEPLOYMENT (CHÍNH THỨC)
-        current_art = st.session_state.get("current_artifact_id")
-        if current_art and targets:
-            if st.button("🚀 KÍCH HOẠT DEPLOYMENT", type="primary", use_container_width=True):
-                # Tạo lệnh Deployment tổng
-                dep = sb.table("deployments").insert({
-                    "artifact_id": current_art,
-                    "mode": deploy_mode,
-                    "status": "pending"
-                }).execute()
-
-                if dep.data:
-                    deployment_id = dep.data[0]["id"]
-                    # Tạo các bản ghi chi tiết cho từng máy
-                    target_records = [
-                        {"deployment_id": deployment_id, "machine_id": m, "status": "pending", "progress": 0}
-                        for m in targets
-                    ]
-                    sb.table("deployment_targets").insert(target_records).execute()
-                    
-                    st.session_state["current_artifact_id"] = None # Reset sau khi dùng
-                    st.success(f"🚀 Deployment #{deployment_id} đã được phát lệnh!")
-                    time.sleep(1)
-                    st.rerun()
-    else:
-        st.warning("Chưa có máy nào trực tuyến để triển khai.")
-
-    # 5️⃣ GIÁM SÁT DEPLOYMENT
-    st.write("---")
-    st.markdown("### 📊 Real-time Deployment Progress")
-    
-    try:
-        # Query lấy 5 đợt deploy gần nhất kèm thông tin artifact
-        deps = sb.table("deployments") \
-                 .select("id, status, created_at, artifacts(version, file_name)") \
-                 .order("created_at", desc=True).limit(5).execute()
         
-        if deps.data:
-            for d in deps.data:
-                # Tìm icon trạng thái
-                status_icon = "⏳" if d['status'] == 'pending' else "✅"
-                with st.expander(f"{status_icon} Đợt Deploy #{d['id']} | File: {d['artifacts']['file_name']} ({d['artifacts']['version']})"):
-                    # Lấy tiến độ từng máy
-                    t_res = sb.table("deployment_targets") \
-                              .select("machine_id, status, progress") \
-                              .eq("deployment_id", d["id"]).execute()
+        # 4️⃣ KÍCH HOẠT DEPLOYMENT (BƯỚC 3)
+        if curr_id and targets:
+            st.markdown("### 🚀 Bước 3: Khởi chạy chiến dịch")
+            if st.button("⚡ PHÁT LỆNH TRIỂN KHAI TOÀN CỤM", type="primary", use_container_width=True):
+                with st.spinner("Đang điều phối lệnh tới các Agent..."):
+                    # 1. Tạo bản ghi cha (Deployments)
+                    dep = sb.table("deployments").insert({
+                        "artifact_id": curr_id,
+                        "mode": deploy_mode,
+                        "status": "pending"
+                    }).execute()
+
+                    if dep.data:
+                        deployment_id = dep.data[0]["id"]
+                        # 2. Tạo bản ghi con cho từng máy (Targets)
+                        target_records = [
+                            {
+                                "deployment_id": deployment_id, 
+                                "machine_id": m, 
+                                "status": "pending", 
+                                "progress": 0
+                            } for m in targets
+                        ]
+                        sb.table("deployment_targets").insert(target_records).execute()
+                        
+                        st.session_state["current_artifact_id"] = None # Clear để làm đợt mới
+                        st.balloons()
+                        st.success(f"🚀 Chiến dịch #{deployment_id} đã bắt đầu!")
+                        time.sleep(1.5)
+                        st.rerun()
+    else:
+        st.warning("⚠️ Không tìm thấy Agent nào trực tuyến.")
+
+    # 5️⃣ GIÁM SÁT TIẾN ĐỘ (REAL-TIME)
+    st.write("---")
+    st.markdown("### 📊 Live Deployment Monitor")
+    
+    # Lấy 3 đợt gần nhất để tránh lag giao diện
+    recent_deps = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(3).execute()
+    
+    if recent_deps.data:
+        for d in recent_deps.data:
+            with st.container(border=True):
+                col_h1, col_h2 = st.columns([3, 1])
+                col_h1.subheader(f"📦 Deploy #{d['id']} - {d['artifacts']['file_name']}")
+                col_h2.write(f"⏱️ {d['created_at'][:16]}")
+                
+                # Truy vấn tiến độ thực tế từ Agent trả về
+                targets_res = sb.table("deployment_targets").select("*").eq("deployment_id", d['id']).execute()
+                
+                if targets_res.data:
+                    df_res = pd.DataFrame(targets_res.data)
                     
-                    if t_res.data:
-                        df_t = pd.DataFrame(t_res.data)
-                        
-                        # Hiển thị bảng tiến độ mini
-                        st.dataframe(df_t, use_container_width=True, hide_index=True, 
-                                     column_config={"progress": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100, format="%d%%")})
-                        
-                        # Tính tổng tiến độ
-                        done = (df_t["status"] == "applied").sum()
-                        total = len(df_t)
-                        prog_value = done / total if total > 0 else 0
-                        
-                        st.progress(prog_value)
-                        st.caption(f"Hoàn thành: **{done}/{total}** máy | Thời gian tạo: {d['created_at']}")
-        else:
-            st.info("Chưa có lịch sử triển khai nào.")
-    except Exception as e:
-        st.error(f"Lỗi hiển thị tiến độ: {e}")
+                    # Tính toán % tổng thể
+                    avg_progress = df_res["progress"].mean()
+                    st.progress(int(avg_progress))
+                    
+                    # Bảng chi tiết từng máy
+                    st.dataframe(
+                        df_res[["machine_id", "status", "progress", "updated_at"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "progress": st.column_config.ProgressColumn("Tiến độ", format="%d%%"),
+                            "status": st.column_config.SelectboxColumn("Trạng thái", options=["pending", "downloading", "verifying", "applying", "applied", "failed"])
+                        }
+                    )
+                    
+                    # Nút hỗ trợ xử lý nhanh
+                    if avg_progress < 100:
+                        if st.button(f"♻️ Thử lại các máy lỗi (Deploy #{d['id']})", key=f"retry_{d['id']}"):
+                            sb.table("deployment_targets").update({"status": "pending", "progress": 0}).eq("deployment_id", d['id']).eq("status", "failed").execute()
+                            st.rerun()
 with t_sum:
     # 🔵 LEVEL 1: EXECUTIVE SNAPSHOT (10s Insight)
     st.markdown("# 🧠 System Intelligence Dashboard")
