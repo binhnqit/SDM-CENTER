@@ -479,25 +479,32 @@ def render_ai_strategic_hub_v3(df_d, now_dt, sb):
 with t_ai:
     if not df_d.empty:
         try:
+            # 1. Chuẩn bị thời gian chuẩn UTC
             now_dt_aware = datetime.now(timezone.utc)
+            
+            # 2. Đảm bảo cột last_seen_dt hợp lệ
             if 'last_seen_dt' not in df_d.columns:
                 df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
             
-            # Sidebar button để chụp ảnh hệ thống
+            # 3. Nút bấm Snapshot (Nằm trong Sidebar)
+            # Fix: Chỉ rerun KHI bấm nút, không để rerun tự do
             if st.sidebar.button("🎨 Capture Color Learning Snapshot"):
-                df_learn = AI_Color_Insight_Engine.load_learning_data(sb, days=30)
-                snap = AI_Color_Insight_Engine.generate_snapshot(df_learn)
-                AI_Color_Insight_Engine.save_snapshot(sb, snap)
-                st.toast("🎨 AI đã học xong hành vi pha màu!")
-                time.sleep(0.5)
-            st.rerun()
+                with st.spinner("AI đang học dữ liệu pha màu..."):
+                    df_learn = AI_Color_Insight_Engine.load_learning_data(sb, days=30)
+                    snap = AI_Color_Insight_Engine.generate_snapshot(df_learn)
+                    AI_Color_Insight_Engine.save_snapshot(sb, snap)
+                    st.toast("🎨 AI đã học xong hành vi pha màu!")
+                    time.sleep(1)
+                    st.rerun() # Chỉ rerun khi đã xử lý xong nút bấm
 
+            # 4. Hiển thị Dashboard AI
             render_ai_strategic_hub_v3(df_d, now_dt_aware, sb)
+            
         except Exception as e:
-            st.error(f"Lỗi AI Engine: {e}")
+            st.error(f"Lỗi vận hành AI Engine: {e}")
+            st.info("Gợi ý: Kiểm tra xem bảng 'ai_snapshots' đã có dữ liệu chưa.")
     else:
-        st.info("Đang tải dữ liệu từ trung tâm...")
-
+        st.info("Đang tải dữ liệu từ trung tâm... Vui lòng đợi trong giây lát.")
 with t_sys:
     st.subheader("⚙️ Quản trị & Tối ưu hóa Database")
     col1, col2 = st.columns(2)
