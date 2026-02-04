@@ -99,7 +99,7 @@ if not df_d.empty:
 # --- NAVIGATION TABS ---
 # --- TRONG PHẦN KHAI BÁO TABS ---
 t_mon, t_ctrl, t_file, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs([
-    "📊 GIÁM SÁT", "🎮 ĐIỀU KHIỂN", "📤 TRUYỀN FILE", "📜 TỔNG KẾT", "🕵️ TRUY VẾT", "🧠 AI INSIGHT", "📥 CSV LEARNING", "🔑 QUẢN LÝ TOKEN", "⚙️ HỆ THỐNG"
+    "📊 GIÁM SÁT", "🎮 ĐIỀU KHIỂN", "📤 TRUYỀN FILE", "📜 TỔNG KẾT", "🕵️ TRUY VẾT", "🧠 AI INSIGHT","📥 CSV LEARNING", "🔑 QUẢN LÝ TOKEN", "⚙️ HỆ THỐNG"
 ])
 
 # --- NỘI DUNG TAB QUẢN LÝ TOKEN ---
