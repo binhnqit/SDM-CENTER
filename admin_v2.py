@@ -322,11 +322,14 @@ with t_offline:
 import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu file
 
 # --- TRƯỚC HẾT: PHẢI CÓ CLASS NÀY THÌ TAB AI MỚI CHẠY ĐƯỢC ---
+# ... (Phần trên giữ nguyên đến hết class AI_Engine_v3)
+
 class AI_Engine_v3:
     @staticmethod
     def save_snapshot(sb, snapshot):
         if snapshot:
             sb.table("ai_color_snapshots").insert(snapshot).execute()
+    
     @staticmethod
     def calculate_features(df_d, now_dt):
         total = len(df_d)
@@ -343,13 +346,70 @@ class AI_Engine_v3:
         return {"total": total, "offline_ratio": offline_ratio, "avg_off": avg_off, "new_1h": new_off_1h, "jitter": jitter}
 
     @staticmethod
-  
     def run_snapshot(sb, features):
         score = (features['offline_ratio'] * 40 + min(features['avg_off'] / 1440, 1.0) * 30 + min(features['new_1h'] / (features['total'] * 0.1 + 1), 1.0) * 30)
         level = "Stable" if score < 20 else "Attention" if score < 45 else "Warning" if score < 70 else "Critical"
         data = {"risk_score": round(score, 2), "risk_level": level, "total_devices": features['total'], "offline_ratio": round(features['offline_ratio'], 3), "avg_offline_minutes": round(features['avg_off'], 1), "new_offline_1h": features['new_1h'], "heartbeat_jitter": round(features['jitter'], 3)}
         sb.table("ai_snapshots").insert(data).execute()
         return data
+
+# 👉 CHÈN CODE MỚI CỦA SẾP VÀO ĐÂY (VỊ TRÍ SAU ENGINE V3 VÀ TRƯỚC RENDER)
+class AI_Color_Insight_Engine:
+    @staticmethod
+    def load_learning_data(sb, days=30):
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        res = (
+            sb.table("ai_learning_data")
+              .select("payload")
+              .gte("event_time", since)
+              .execute()
+        )
+        if not res.data:
+            return pd.DataFrame()
+
+        rows = [r["payload"] for r in res.data]
+        return sanitize_df(pd.DataFrame(rows))
+
+    @staticmethod
+    def generate_snapshot(df: pd.DataFrame):
+        if df.empty:
+            return None
+
+        snapshot = {
+            "snapshot_date": datetime.now().date().isoformat(),
+
+            "top_colors": (
+                df.groupby("color_code")
+                  .size()
+                  .sort_values(ascending=False)
+                  .head(10)
+                  .reset_index(name="mix_count")
+                  .to_dict(orient="records")
+            ) if "color_code" in df.columns else [],
+
+            "top_pigments": (
+                df.groupby("pigment_code")["volume"]
+                  .sum()
+                  .sort_values(ascending=False)
+                  .head(10)
+                  .reset_index()
+                  .to_dict(orient="records")
+            ) if {"pigment_code", "volume"}.issubset(df.columns) else [],
+
+            "usage_stats": {
+                "total_volume": float(df["volume"].sum()) if "volume" in df.columns else 0,
+                "avg_volume_per_mix": float(df["volume"].mean()) if "volume" in df.columns else 0
+            },
+
+            "total_records": len(df)
+        }
+
+        return snapshot
+
+    @staticmethod
+    def save_snapshot(sb, snapshot):
+        if snapshot:
+            sb.table("ai_color_snapshots").insert(snapshot).execute()
 
 # --- HÀM RENDER (GIỮ NGUYÊN GIAO DIỆN APPLE) ---
 def render_ai_strategic_hub_v3(df_d, now_dt, sb):
