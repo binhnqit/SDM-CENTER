@@ -401,36 +401,137 @@ with t_ctrl:
         st.info("Không có dữ liệu thiết bị để điều khiển.")
 
 with t_file:
-    st.subheader("Phát hành bộ dữ liệu SDF")
-    file_up = st.file_uploader("Kéo thả file .SDF", type=['sdf'])
-    active_machines = df_d['machine_id'].unique().tolist() if not df_d.empty else []
-    f_targets = st.multiselect("Đại lý nhận mục tiêu:", active_machines)
-    
-    if st.button("🚀 KÍCH HOẠT ĐỒNG BỘ") and file_up and f_targets:
-        with st.status("Đang chuẩn bị gói tin..."):
-            encoded = base64.b64encode(zlib.compress(file_up.getvalue())).decode('utf-8')
-            chunks = [encoded[i:i+100000] for i in range(0, len(encoded), 100000)]
-            
-            for m in f_targets:
-                # SỬA LỖI 1: Batch_ID độc nhất cho mỗi máy để tránh Agent update chồng chéo
-                batch_id = f"{m}_{file_up.name}_{int(time.time())}"
-                payload = []
-                for i, c in enumerate(chunks):
-                    payload.append({
-                        "machine_id": m, 
-                        "file_name": file_up.name, 
-                        "data_chunk": c,
-                        "part_info": f"PART_{i+1}/{len(chunks)}", 
-                        "timestamp": batch_id, # Dùng batch_id làm timestamp định danh
-                        "status": "PENDING"
-                    })
-                # Insert theo lô 50 bản ghi
-                for j in range(0, len(payload), 50):
-                    sb.table("file_queue").insert(payload[j:j+50]).execute()
-            st.success("Đã phát hành lệnh đồng bộ!")
-            time.sleep(1); st.rerun()
+    # 1️⃣ HEADER
+    st.markdown("## 📦 Deployment Center")
+    st.caption("Quản lý Artifacts và triển khai file cấu hình/firmware tới hệ thống máy pha màu.")
 
-# --- TAB TỔNG KẾT (Sửa Lỗi Hiển Thị) ---
+    # 2️⃣ UPLOAD ARTIFACT
+    with st.expander("⬆️ Bước 1: Upload Artifact (File + Metadata)", expanded=True):
+        file = st.file_uploader("Chọn file triển khai", type=["bin", "zip", "json", "cfg", "sdf"])
+        
+        c_art1, c_art2, c_art3 = st.columns(3)
+        with c_art1:
+            file_type = st.selectbox("Loại file", ["SDF Data", "Firmware", "Config", "AI Model"])
+        with c_art2:
+            version = st.text_input("Version", placeholder="v1.2.3")
+        with c_art3:
+            deploy_mode = st.radio("Deploy mode", ["Rolling", "All-at-once"], horizontal=True)
+
+        artifact_id = st.session_state.get("current_artifact_id", None)
+
+        if file and version:
+            if st.button("📥 Lưu & Đóng gói Artifact", type="primary", use_container_width=True):
+                file_bytes = file.getvalue()
+                checksum = hashlib.sha256(file_bytes).hexdigest()
+                size_kb = round(len(file_bytes) / 1024, 2)
+                
+                # Encode file để lưu (Sếp có thể lưu vào Storage, ở đây tôi lưu metadata)
+                # Lưu ý: Với file lớn, nên dùng Supabase Storage.
+                res = sb.table("artifacts").insert({
+                    "file_name": file.name,
+                    "file_type": file_type,
+                    "version": version,
+                    "checksum": checksum,
+                    "size": size_kb
+                }).execute()
+                
+                if res.data:
+                    st.session_state["current_artifact_id"] = res.data[0]["id"]
+                    st.success(f"✅ Đã lưu Artifact: {file.name} ({version})")
+                    st.rerun()
+
+    # 3️⃣ CHỌN TARGET MÁY
+    st.write("---")
+    st.markdown("### 🎯 Bước 2: Chọn máy triển khai")
+    
+    if not df_d.empty:
+        # Sử dụng df_d có sẵn từ đầu để không phải query lại
+        df_m = df_d.copy()
+        df_m["select"] = False
+        
+        # Sắp xếp lại các cột cho dễ nhìn
+        cols_display = ["select", "User", "machine_id", "monitor_state"]
+        edited = st.data_editor(
+            df_m[cols_display],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "select": st.column_config.CheckboxColumn("Chọn"),
+                "User": "Đại lý/Người dùng",
+                "machine_id": "Mã máy",
+                "monitor_state": "Trạng thái"
+            },
+            disabled=["User", "machine_id", "monitor_state"]
+        )
+        
+        targets = edited[edited["select"]]["machine_id"].tolist()
+        st.info(f"📍 Đã chọn **{len(targets)}** máy mục tiêu.")
+
+        # 4️⃣ TẠO DEPLOYMENT (CHÍNH THỨC)
+        current_art = st.session_state.get("current_artifact_id")
+        if current_art and targets:
+            if st.button("🚀 KÍCH HOẠT DEPLOYMENT", type="primary", use_container_width=True):
+                # Tạo lệnh Deployment tổng
+                dep = sb.table("deployments").insert({
+                    "artifact_id": current_art,
+                    "mode": deploy_mode,
+                    "status": "pending"
+                }).execute()
+
+                if dep.data:
+                    deployment_id = dep.data[0]["id"]
+                    # Tạo các bản ghi chi tiết cho từng máy
+                    target_records = [
+                        {"deployment_id": deployment_id, "machine_id": m, "status": "pending", "progress": 0}
+                        for m in targets
+                    ]
+                    sb.table("deployment_targets").insert(target_records).execute()
+                    
+                    st.session_state["current_artifact_id"] = None # Reset sau khi dùng
+                    st.success(f"🚀 Deployment #{deployment_id} đã được phát lệnh!")
+                    time.sleep(1)
+                    st.rerun()
+    else:
+        st.warning("Chưa có máy nào trực tuyến để triển khai.")
+
+    # 5️⃣ GIÁM SÁT DEPLOYMENT
+    st.write("---")
+    st.markdown("### 📊 Real-time Deployment Progress")
+    
+    try:
+        # Query lấy 5 đợt deploy gần nhất kèm thông tin artifact
+        deps = sb.table("deployments") \
+                 .select("id, status, created_at, artifacts(version, file_name)") \
+                 .order("created_at", desc=True).limit(5).execute()
+        
+        if deps.data:
+            for d in deps.data:
+                # Tìm icon trạng thái
+                status_icon = "⏳" if d['status'] == 'pending' else "✅"
+                with st.expander(f"{status_icon} Đợt Deploy #{d['id']} | File: {d['artifacts']['file_name']} ({d['artifacts']['version']})"):
+                    # Lấy tiến độ từng máy
+                    t_res = sb.table("deployment_targets") \
+                              .select("machine_id, status, progress") \
+                              .eq("deployment_id", d["id"]).execute()
+                    
+                    if t_res.data:
+                        df_t = pd.DataFrame(t_res.data)
+                        
+                        # Hiển thị bảng tiến độ mini
+                        st.dataframe(df_t, use_container_width=True, hide_index=True, 
+                                     column_config={"progress": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100, format="%d%%")})
+                        
+                        # Tính tổng tiến độ
+                        done = (df_t["status"] == "applied").sum()
+                        total = len(df_t)
+                        prog_value = done / total if total > 0 else 0
+                        
+                        st.progress(prog_value)
+                        st.caption(f"Hoàn thành: **{done}/{total}** máy | Thời gian tạo: {d['created_at']}")
+        else:
+            st.info("Chưa có lịch sử triển khai nào.")
+    except Exception as e:
+        st.error(f"Lỗi hiển thị tiến độ: {e}")
 with t_sum:
     st.subheader("📜 Nhật ký vận hành hệ thống")
     if not df_f.empty:
