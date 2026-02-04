@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone  # Thêm timezone vào đây
 import plotly.express as px
 import base64, zlib, time
 import streamlit as st
+import math
+import numpy as np
 
 # --- CORE CONFIG FROM SECRETS ---
 # Không còn hard-code, bảo mật tuyệt đối khi chia sẻ code
@@ -110,6 +112,42 @@ t_mon, t_ctrl, t_file, t_csv, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs(
     "⚙️ HỆ THỐNG"
 ])
 # --- CSV LEARNING TAB ---
+def sanitize_for_json(obj):
+    """
+    Convert Pandas / NumPy values into JSON-safe Python values
+    """
+    if obj is None:
+        return None
+
+    # NaN, NaT
+    if isinstance(obj, float) and math.isnan(obj):
+        return None
+    if pd.isna(obj):
+        return None
+
+    # numpy scalar
+    if isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    if isinstance(obj, (np.floating, np.float64)):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return float(obj)
+
+    # timestamp
+    if isinstance(obj, pd.Timestamp):
+        if pd.isna(obj):
+            return None
+        return obj.isoformat()
+
+    # dict
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+
+    # list
+    if isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+
+    return obj
 with t_csv:
     st.subheader("📥 CSV Learning Memory")
     st.caption("Nạp lịch sử vận hành để AI học hành vi thực tế")
@@ -123,9 +161,6 @@ with t_csv:
         try:
             df_csv = pd.read_csv(csv_file)
 
-            # ✅ FIX JSON COMPLIANCE: NaN → None
-            df_csv = df_csv.where(pd.notnull(df_csv), None)
-
             st.success(f"Đã tải {len(df_csv)} dòng dữ liệu")
             st.dataframe(df_csv.head(100), use_container_width=True)
 
@@ -133,12 +168,15 @@ with t_csv:
                 records = []
 
                 for _, row in df_csv.iterrows():
+                    raw_payload = sanitize_for_json(row.to_dict())
+
                     records.append({
-                        "machine_id": row.get("machine_id"),
-                        "event_time": row.get("dispense_time") or row.get("timestamp"),
-                        "payload": row.to_dict()
+                        "machine_id": raw_payload.get("machine_id"),
+                        "event_time": raw_payload.get("dispense_time") or raw_payload.get("timestamp"),
+                        "payload": raw_payload
                     })
 
+                # insert batch an toàn
                 for i in range(0, len(records), 100):
                     sb.table("ai_learning_data").insert(
                         records[i:i+100]
