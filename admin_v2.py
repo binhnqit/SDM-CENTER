@@ -16,7 +16,9 @@ ADMIN_PASSWORD = st.secrets["auth"]["admin_password"]
 sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="4Oranges SDM Lux Secure Pro", layout="wide", initial_sidebar_state="expanded")
-
+# --- AUTH PERSIST VIA QUERY PARAM (SAFE REFRESH) ---
+if "auth" in st.query_params and st.query_params["auth"] == "1":
+    st.session_state['authenticated'] = True
 # --- STYLE APPLE CSS ---
 st.markdown("""
     <style>
