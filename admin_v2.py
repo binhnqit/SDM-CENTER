@@ -1000,7 +1000,8 @@ with t_sys:
                 st.toast("Đã đóng băng mô hình AI.")
 
     # --- 🤖 5. AI SYSTEM GUARD (CỰC KỲ PRO) ---
-    st.markdown("---")
+    # --- 🤖 5. AI SYSTEM GUARD (CỰC KỲ PRO) ---
+    
     st.markdown("### 🤖 AI System Guard")
     with st.container(border=True):
         st.markdown("""
@@ -1009,4 +1010,11 @@ with t_sys:
         * 🟡 **Cảnh báo:** Phát hiện **3 cleanup liên tiếp** trong 1h bởi User: `admin_01`.
         * 🔴 **Bất thường:** Deployment diễn ra vào khung giờ nhạy cảm (**02:13 AM**).
         """)
-        st.button("🔍 Yêu cầu giải trình hành vi", size="small")
+        
+        # Đã xóa tham số size="small" để tránh lỗi TypeError
+        c_guard1, c_guard2 = st.columns([1, 3])
+        with c_guard1:
+            if st.button("🔍 Giải trình", use_container_width=True):
+                st.toast("Đã gửi yêu cầu giải trình tới Admin liên quan.")
+        with c_guard2:
+            st.caption("AI Guard đang giám sát các thao tác có tác động đến Database.")
