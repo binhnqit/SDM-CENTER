@@ -109,7 +109,43 @@ t_mon, t_ctrl, t_file, t_csv, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs(
     "🔑 QUẢN LÝ TOKEN",
     "⚙️ HỆ THỐNG"
 ])
+# --- CSV LEARNING TAB ---
+with t_csv:
+    st.subheader("📥 CSV Learning Memory")
+    st.caption("Nạp lịch sử vận hành để AI học hành vi thực tế")
 
+    csv_file = st.file_uploader(
+        "Upload file CSV (Dispense / Mixing / History)",
+        type=["csv"]
+    )
+
+    if csv_file:
+        try:
+            df_csv = pd.read_csv(csv_file)
+            st.success(f"Đã tải {len(df_csv)} dòng dữ liệu")
+            st.dataframe(df_csv.head(100), use_container_width=True)
+
+            if st.button("🧠 GHI VÀO AI MEMORY", type="primary"):
+                records = []
+
+                for _, row in df_csv.iterrows():
+                    records.append({
+                        "machine_id": row.get("machine_id"),
+                        "event_time": row.get("dispense_time") or row.get("timestamp"),
+                        "payload": row.to_dict()
+                    })
+
+                for i in range(0, len(records), 100):
+                    sb.table("ai_learning_data").insert(
+                        records[i:i+100]
+                    ).execute()
+
+                st.toast("AI đã tiếp nhận dữ liệu học hỏi!")
+                time.sleep(0.5)
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Lỗi đọc CSV: {e}")
 # --- NỘI DUNG TAB QUẢN LÝ TOKEN ---
 with t_tokens:
     st.subheader("🔑 Phê duyệt thiết bị mới (Security Gate)")
