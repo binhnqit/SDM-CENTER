@@ -241,66 +241,77 @@ with t_mon:
     
     if not df_d.empty:
         # --- 1. XỬ LÝ DỮ LIỆU ---
-        # Đồng bộ timezone để tính toán chính xác
         df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
         now_dt = datetime.now(timezone.utc)
         
-        # Cấu hình ngưỡng thời gian (Phút)
+        # Ngưỡng thời gian
         HEARTBEAT_OK = 3    
         HEARTBEAT_WARN = 10
         HEARTBEAT_DEAD = 30
 
-        # Tính số phút vắng mặt
+        # Tính phút vắng mặt
         df_d['off_minutes'] = (now_dt - df_d['last_seen_dt']).dt.total_seconds() / 60
         df_d['off_minutes'] = df_d['off_minutes'].apply(lambda x: max(0, round(x, 1)))
 
-        # Hàm phân loại trạng thái thông minh
+        # TÁCH TÊN USER: Giả định Agent gửi status dạng "Online | READY | TênUser"
+        # Nếu sếp gửi tên User ở cột khác, hãy đổi tên 'status' thành tên cột đó
+        def extract_user(status_str):
+            try:
+                if "|" in str(status_str):
+                    return status_str.split("|")[-1].strip()
+                return "Unknown"
+            except:
+                return "N/A"
+
+        df_d['User'] = df_d['status'].apply(extract_user)
+
+        # Phân loại trạng thái
         def resolve_state(row):
-            if row['off_minutes'] <= HEARTBEAT_OK:
-                return "🟢 Online"
-            if row['off_minutes'] <= HEARTBEAT_WARN:
-                return "🟡 Unstable"
-            if row['off_minutes'] <= HEARTBEAT_DEAD:
-                return "🔴 Offline"
+            if row['off_minutes'] <= HEARTBEAT_OK: return "🟢 Online"
+            if row['off_minutes'] <= HEARTBEAT_WARN: return "🟡 Unstable"
+            if row['off_minutes'] <= HEARTBEAT_DEAD: return "🔴 Offline"
             return "⚫ Dead"
 
         df_d['monitor_state'] = df_d.apply(resolve_state, axis=1)
 
-        # --- 2. HIỂN THỊ METRICS TỔNG HỢP ---
-        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-        m_col1.metric("Thiết bị sẵn sàng", len(df_d[df_d['monitor_state'] == "🟢 Online"]))
-        m_col2.metric("Tín hiệu yếu", len(df_d[df_d['monitor_state'] == "🟡 Unstable"]))
-        m_col3.metric("Đang ngoại tuyến", len(df_d[df_d['monitor_state'] == "🔴 Offline"]))
-        m_col4.metric("Mất kết nối lâu", len(df_d[df_d['monitor_state'] == "⚫ Dead"]))
+        # --- 2. METRICS TỔNG HỢP ---
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Thiết bị sẵn sàng", len(df_d[df_d['monitor_state'] == "🟢 Online"]))
+        m2.metric("Tín hiệu yếu", len(df_d[df_d['monitor_state'] == "🟡 Unstable"]))
+        m3.metric("Đang ngoại tuyến", len(df_d[df_d['monitor_state'] == "🔴 Offline"]))
+        m4.metric("Mất kết nối lâu", len(df_d[df_d['monitor_state'] == "⚫ Dead"]))
 
-        # --- 3. BỘ LỌC NHANH ---
+        # --- 3. BỘ LỌC ---
         st.write("")
-        search_id = st.text_input("🔍 Tìm nhanh mã máy (Machine ID):", placeholder="Nhập ID...")
-        state_filter = st.multiselect("Lọc theo trạng thái:", 
-                                     ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"],
-                                     default=["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"])
+        c_search1, c_search2 = st.columns([1, 2])
+        with c_search1:
+            search_user = st.text_input("👤 Tìm theo User:", placeholder="Tên user...")
+        with c_search2:
+            state_filter = st.multiselect("Lọc trạng thái:", 
+                                         ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"],
+                                         default=["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"])
         
         filtered_df = df_d[df_d['monitor_state'].isin(state_filter)]
-        if search_id:
-            filtered_df = filtered_df[filtered_df['machine_id'].str.contains(search_id, case=False)]
+        if search_user:
+            filtered_df = filtered_df[filtered_df['User'].str.contains(search_user, case=False)]
 
-        # --- 4. BẢNG DỮ LIỆU CHI TIẾT ---
+        # --- 4. BẢNG DỮ LIỆU (User ở cột ĐẦU TIÊN) ---
         st.dataframe(
-            filtered_df[['machine_id', 'monitor_state', 'off_minutes', 'cpu_usage', 'ram_usage', 'last_seen_dt', 'status']],
+            filtered_df[['User', 'machine_id', 'monitor_state', 'off_minutes', 'cpu_usage', 'ram_usage', 'last_seen_dt']],
             column_config={
+                "User": st.column_config.TextColumn("👤 Người dùng", help="Tên tài khoản Windows đăng nhập"),
                 "machine_id": "Mã Máy",
-                "monitor_state": "Trạng Thái Hệ Thống",
-                "off_minutes": st.column_config.NumberColumn("Vắng mặt (Phút)", format="%.1f ⏳"),
-                "cpu_usage": st.column_config.ProgressColumn("Tải CPU", min_value=0, max_value=100, format="%d%%"),
-                "ram_usage": st.column_config.ProgressColumn("Tải RAM", min_value=0, max_value=100, format="%d%%"),
-                "last_seen_dt": "Cập nhật cuối",
-                "status": "Lệnh hiện tại"
+                "monitor_state": "Trạng Thái",
+                "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f phút"),
+                "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
+                "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
+                "last_seen_dt": "Cập nhật cuối"
             },
             use_container_width=True,
             hide_index=True
         )
     else:
-        st.info("Chưa có dữ liệu thiết bị nào được gửi về trung tâm.")
+        st.info("Chưa có dữ liệu thiết bị.")
 
 with t_ctrl:
     st.subheader("Trung tâm lệnh chiến lược")
