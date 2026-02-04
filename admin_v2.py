@@ -400,10 +400,6 @@ with t_ctrl:
     else:
         st.info("Không có dữ liệu thiết bị để điều khiển.")
 
-import base64, zlib, hashlib, time
-from datetime import datetime, timezone
-import pandas as pd
-
 with t_file:
     st.markdown("## 📦 Deployment Center")
     st.caption("Quy trình triển khai 4 bước: Đóng gói -> Mục tiêu -> Khởi tạo -> Truyền tải.")
@@ -447,23 +443,39 @@ with t_file:
         targets = edited[edited["select"]]["machine_id"].tolist()
         st.info(f"📍 Đã chọn **{len(targets)}** máy mục tiêu.")
 
-    # --- 3️⃣ BƯỚC 3: KHỞI TẠO CHIẾN DỊCH (READY STATE) ---
-    st.write("---")
-    st.markdown("### 📝 Bước 3: Khởi tạo chiến dịch")
-    if curr_art and targets:
-        if st.button("🏗️ CREATE DEPLOYMENT (READY)", use_container_width=True):
-            dep = sb.table("deployments").insert({
-                "artifact_id": curr_art, "mode": mode, "status": "ready" # CHƯA TRUYỀN
-            }).execute()
-            if dep.data:
-                dep_id = dep.data[0]["id"]
-                target_records = [{"deployment_id": dep_id, "machine_id": m, "status": "staged", "progress": 0} for m in targets]
-                sb.table("deployment_targets").insert(target_records).execute()
-                st.session_state["current_artifact_id"] = None
-                st.success(f"✅ Chiến dịch #{dep_id} đang ở trạng thái READY. Chờ lệnh truyền file.")
-                st.rerun()
-    else:
-        st.caption("Vui lòng hoàn thành Bước 1 và Bước 2 để khởi tạo.")
+   
+    # --- 3️⃣ BƯỚC 3: KHỞI TẠO CHIẾN DỊCH ---
+st.write("---")
+st.markdown("### 📝 Bước 3: Khởi tạo chiến dịch")
+
+# Lấy ID artifact từ session state
+curr_art = st.session_state.get("current_artifact_id")
+
+if not curr_art:
+    st.warning("⚠️ Bạn chưa hoàn thành Bước 1: Upload và Lưu Artifact.")
+elif not targets:
+    st.warning("⚠️ Bạn chưa hoàn thành Bước 2: Chọn ít nhất 1 máy mục tiêu.")
+else:
+    # Nếu đủ cả 2 điều kiện, hiện nút bấm Pro ngay
+    if st.button("🏗️ CREATE DEPLOYMENT (READY)", type="secondary", use_container_width=True):
+        dep = sb.table("deployments").insert({
+            "artifact_id": curr_art, 
+            "mode": mode, 
+            "status": "ready" 
+        }).execute()
+        
+        if dep.data:
+            dep_id = dep.data[0]["id"]
+            target_records = [{"deployment_id": dep_id, "machine_id": m, "status": "staged", "progress": 0} for m in targets]
+            sb.table("deployment_targets").insert(target_records).execute()
+            
+            # Giữ lại artifact id nếu sếp muốn tạo nhiều chiến dịch liên tiếp, 
+            # hoặc clear đi nếu sếp chỉ muốn làm 1 lần:
+            # st.session_state["current_artifact_id"] = None 
+            
+            st.success(f"✅ Đã tạo chiến dịch #{dep_id}! Bây giờ sếp hãy kéo xuống Bước 4 để BẮT ĐẦU TRUYỀN.")
+            time.sleep(1)
+            st.rerun()
 
 # --- 4️⃣ BƯỚC 4: START TRANSFER & MONITOR ---
 st.write("---")
