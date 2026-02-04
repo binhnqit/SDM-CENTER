@@ -43,6 +43,7 @@ if not st.session_state['authenticated']:
         if st.button("Đăng nhập", use_container_width=True, type="primary"):
             if pwd == ADMIN_PASSWORD:
                 st.session_state['authenticated'] = True
+                st.query_params["auth"] = "1" 
                 st.rerun()
             else:
                 st.error("Mật khẩu không chính xác.")
