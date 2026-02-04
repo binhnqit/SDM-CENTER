@@ -465,27 +465,58 @@ with t_file:
     else:
         st.caption("Vui lòng hoàn thành Bước 1 và Bước 2 để khởi tạo.")
 
-    # --- 4️⃣ BƯỚC 4: START TRANSFER & MONITOR ---
-    st.write("---")
-    st.markdown("### 🚀 Bước 4: Điều phối truyền file")
-    
-    recent_deps = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(5).execute()
-    
-    if recent_deps.data:
-        for d in recent_deps.data:
-            with st.container(border=True):
-                c_head, c_btn = st.columns([3, 1])
-                c_head.subheader(f"Campaign #{d['id']} [{d['status'].upper()}]")
-                c_head.caption(f"File: {d['artifacts']['file_name']} | Version: {d['artifacts']['version']}")
+# --- 4️⃣ BƯỚC 4: START TRANSFER & MONITOR ---
+st.write("---")
+st.markdown("### 🚀 Bước 4: Điều phối truyền file")
 
-                # NÚT START TRANSFER (CHỈ HIỆN KHI READY)
-                if d["status"] == "ready":
-                    if c_btn.button("▶ START TRANSFER", key=f"start_{d['id']}", type="primary", use_container_width=True):
-                        # Update trạng thái cha
-                        sb.table("deployments").update({
-                            "status": "transferring",
-                            "started_at": datetime.now(timezone.utc).isoformat()
-                        }).eq("id", d["id"]).
+# Lấy các chiến dịch gần đây
+recent_deps = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(5).execute()
+
+if recent_deps.data:
+    for d in recent_deps.data:
+        with st.container(border=True):
+            c_head, c_btn = st.columns([3, 1])
+            c_head.subheader(f"Campaign #{d['id']} [{d['status'].upper()}]")
+            c_head.caption(f"File: {d['artifacts']['file_name']} | Version: {d['artifacts']['version']}")
+
+            # NÚT START TRANSFER (Chỉ hiện khi status là ready)
+            if d["status"] == "ready":
+                if c_btn.button("▶ START TRANSFER", key=f"start_{d['id']}", type="primary", use_container_width=True):
+                    # 1. Cập nhật bảng cha thành 'transferring'
+                    sb.table("deployments").update({
+                        "status": "transferring",
+                        "started_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", d["id"]).execute()
+                    
+                    # 2. Cập nhật bảng con thành 'pending' để Agent V15 bắt đầu kéo file
+                    sb.table("deployment_targets").update({
+                        "status": "pending",
+                        "progress": 0
+                    }).eq("deployment_id", d["id"]).execute()
+                    
+                    st.toast(f"🚀 Đã kích hoạt truyền file cho Campaign #{d['id']}")
+                    time.sleep(1)
+                    st.rerun()
+            
+            # --- MONITORING AREA ---
+            t_res = sb.table("deployment_targets").select("*").eq("deployment_id", d["id"]).execute()
+            if t_res.data:
+                df_res = pd.DataFrame(t_res.data)
+                avg_prog = df_res["progress"].mean()
+                
+                # Hiển thị thanh tiến độ tổng quát của chiến dịch
+                st.progress(int(avg_prog))
+                
+                with st.expander(f"Chi tiết tiến độ ({len(df_res)} máy)"):
+                    st.dataframe(
+                        df_res[["machine_id", "status", "progress", "updated_at"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "progress": st.column_config.ProgressColumn("Tiến độ", format="%d%%"),
+                            "updated_at": "Cập nhật cuối"
+                        }
+                    )
 with t_sum:
     # 🔵 LEVEL 1: EXECUTIVE SNAPSHOT (10s Insight)
     st.markdown("# 🧠 System Intelligence Dashboard")
