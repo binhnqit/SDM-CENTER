@@ -163,7 +163,7 @@ with t_csv:
 
     if csv_file:
         try:
-            df_csv = pd.read_csv(csv_file)
+            df_csv = sanitize_df(pd.read_csv(csv_file))
 
             st.success(f"Đã tải {len(df_csv)} dòng dữ liệu")
             st.dataframe(df_csv.head(100), use_container_width=True)
