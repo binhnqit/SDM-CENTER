@@ -323,7 +323,60 @@ import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu 
 
 # --- TRƯỚC HẾT: PHẢI CÓ CLASS NÀY THÌ TAB AI MỚI CHẠY ĐƯỢC ---
 class AI_Engine_v3:
-    def save_snapshot(sb, snapshot):
+class AI_Color_Insight_Engine:
+    @staticmethod
+    def load_learning_data(sb, days=30):
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        res = (
+            sb.table("ai_learning_data")
+              .select("payload")
+              .gte("event_time", since)
+              .execute()
+        )
+        if not res.data:
+            return pd.DataFrame()
+
+        rows = [r["payload"] for r in res.data]
+        return sanitize_df(pd.DataFrame(rows))
+
+    @staticmethod
+    def generate_snapshot(df: pd.DataFrame):
+        if df.empty:
+            return None
+
+        snapshot = {
+            "snapshot_date": datetime.now().date().isoformat(),
+
+            "top_colors": (
+                df.groupby("color_code")
+                  .size()
+                  .sort_values(ascending=False)
+                  .head(10)
+                  .reset_index(name="mix_count")
+                  .to_dict(orient="records")
+            ) if "color_code" in df.columns else [],
+
+            "top_pigments": (
+                df.groupby("pigment_code")["volume"]
+                  .sum()
+                  .sort_values(ascending=False)
+                  .head(10)
+                  .reset_index()
+                  .to_dict(orient="records")
+            ) if {"pigment_code", "volume"}.issubset(df.columns) else [],
+
+            "usage_stats": {
+                "total_volume": float(df["volume"].sum()) if "volume" in df.columns else 0,
+                "avg_volume_per_mix": float(df["volume"].mean()) if "volume" in df.columns else 0
+            },
+
+            "total_records": len(df)
+        }
+
+        return snapshot
+
+    @staticmethod
+       def save_snapshot(sb, snapshot):
         if snapshot:
             sb.table("ai_color_snapshots").insert(snapshot).execute()
     @staticmethod
