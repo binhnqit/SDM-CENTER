@@ -97,7 +97,11 @@ if not df_d.empty:
     m2.metric("🟢 Trực tuyến", online_now, delta=f"{online_now/len(df_d)*100:.1f}%")
     m3.metric("Tải CPU TB", f"{df_d['cpu_usage'].mean():.1f}%")
     m4.metric("Dung lượng RAM", f"{df_d['ram_usage'].mean():.1f}%")
-
+def sanitize_df(df: pd.DataFrame):
+    return (
+        df.replace([float("inf"), float("-inf")], None)
+          .where(df.notnull(), None)
+    )
 # --- NAVIGATION TABS ---
 # --- TRONG PHẦN KHAI BÁO TABS ---
 t_mon, t_ctrl, t_file, t_csv, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs([
