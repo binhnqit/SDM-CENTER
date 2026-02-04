@@ -313,11 +313,73 @@ with t_sum:
         st.info("Chưa có lịch sử truyền file.")
 
 with t_offline:
-    st.subheader("🕵️ Kiểm soát vắng mặt")
-    threshold = st.slider("Ngưỡng vắng mặt (ngày):", 1, 90, 30)
-    if not df_d.empty:
-        long_offline = df_d[df_d['last_seen_dt'] < (now_dt - timedelta(days=threshold))]
-        st.dataframe(long_offline, use_container_width=True)
+    st.subheader("🕵️ AI Forensics – Truy vết Offline")
+    st.caption("Phân tích lịch sử gián đoạn để xác định các đại lý có hạ tầng mạng không ổn định.")
+
+    # 1. Thanh điều khiển phạm vi
+    days = st.slider("Phạm vi truy vết (ngày)", 1, 60, 14)
+
+    # 2. Truy vấn dữ liệu từ bảng device_events
+    try:
+        res = (
+            sb.table("device_events")
+              .select("*")
+              .eq("event_type", "OFFLINE")
+              .gte("detected_at", (datetime.now(timezone.utc) - timedelta(days=days)).isoformat())
+              .order("detected_at", desc=True)
+              .execute()
+        )
+        df_evt = pd.DataFrame(res.data)
+
+        if df_evt.empty:
+            st.info("✅ Hệ thống hoạt động ổn định. Không phát hiện sự kiện offline nào trong phạm vi đã chọn.")
+        else:
+            # 3. Phân tích dữ liệu bằng biểu đồ
+            st.markdown("### 📈 Biểu đồ tần suất rớt mạng")
+            # Đếm số lần offline theo từng máy để xem "ai là trùm rớt mạng"
+            off_counts = df_evt['machine_id'].value_counts().reset_index()
+            off_counts.columns = ['machine_id', 'count']
+            
+            fig_off = px.bar(off_counts, x='machine_id', y='count', 
+                             title="Số lần rớt mạng theo từng thiết bị",
+                             labels={'machine_id': 'Mã máy', 'count': 'Số lần'},
+                             color='count', color_continuous_scale='Reds')
+            st.plotly_chart(fig_off, use_container_width=True)
+
+            # 4. Hiển thị bảng chi tiết
+            st.markdown("### 📍 Timeline rớt mạng chi tiết")
+            st.dataframe(
+                df_evt[['machine_id', 'detected_at', 'off_minutes', 'cpu_usage', 'ram_usage']],
+                column_config={
+                    "machine_id": "Mã máy",
+                    "detected_at": "Thời điểm phát hiện",
+                    "off_minutes": "Thời gian sập (phút)",
+                    "cpu_usage": "CPU lúc đó",
+                    "ram_usage": "RAM lúc đó"
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # 5. Nhận định AI thông minh hơn
+            st.markdown("### 🧠 Nhận định AI Forensics")
+            
+            # Tính toán một vài chỉ số để "AI" nói chuyện chuyên nghiệp hơn
+            total_off = len(df_evt)
+            unique_machines = df_evt['machine_id'].nunique()
+            max_off_machine = off_counts.iloc[0]['machine_id'] if not off_counts.empty else "N/A"
+            avg_off_time = df_evt['off_minutes'].mean() if 'off_minutes' in df_evt.columns else 0
+
+            st.warning(
+                f"**Báo cáo hệ thống:** Trong {days} ngày qua, ghi nhận **{total_off}** sự cố mất kết nối từ **{unique_machines}** thiết bị khác nhau. \n\n"
+                f"- 🚨 Máy trạm **{max_off_machine}** có tần suất rớt mạng cao nhất.\n"
+                f"- ⏱️ Thời gian gián đoạn trung bình: **{avg_off_time:.1f} phút**.\n"
+                f"- **Kết luận:** { 'Hạ tầng mạng tại các điểm này cực kỳ kém, cần kiểm tra router.' if unique_machines > 1 else 'Sự cố mang tính cục bộ tại một đại lý duy nhất.' }"
+            )
+            
+    except Exception as e:
+        st.error(f"Lỗi truy vấn Forensics: {e}")
+        st.info("Mẹo: Hãy đảm bảo bảng 'device_events' đã được khởi tạo trong Supabase.")
 
 import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu file
 
