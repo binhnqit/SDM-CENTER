@@ -122,6 +122,10 @@ with t_csv:
     if csv_file:
         try:
             df_csv = pd.read_csv(csv_file)
+
+            # ✅ FIX JSON COMPLIANCE: NaN → None
+            df_csv = df_csv.where(pd.notnull(df_csv), None)
+
             st.success(f"Đã tải {len(df_csv)} dòng dữ liệu")
             st.dataframe(df_csv.head(100), use_container_width=True)
 
