@@ -404,7 +404,35 @@ with t_file:
     # 1️⃣ HEADER
     st.markdown("## 📦 Deployment Center")
     st.caption("Quản lý Artifacts và triển khai file cấu hình/firmware tới hệ thống máy pha màu.")
-
+    # --- TRONG BƯỚC 1: UPLOAD ARTIFACT ---
+if file and version:
+    if st.button("📥 Lưu & Đóng gói Artifact", type="primary", use_container_width=True):
+        with st.spinner("📦 Đang mã hóa và nén dữ liệu..."):
+            file_bytes = file.getvalue()
+            
+            # 1. Tạo Checksum
+            checksum = hashlib.sha256(file_bytes).hexdigest()
+            size_kb = round(len(file_bytes) / 1024, 2)
+            
+            # 2. Mã hóa dữ liệu (Nén zlib + Base64) 
+            # Giúp giảm dung lượng truyền tải và tương thích hoàn hảo với Agent V15
+            compressed_data = zlib.compress(file_bytes)
+            b64_data = base64.b64encode(compressed_data).decode('utf-8')
+            
+            # 3. Đẩy lên bảng artifacts (Bao gồm cả cột data_chunk)
+            res = sb.table("artifacts").insert({
+                "file_name": file.name,
+                "file_type": file_type,
+                "version": version,
+                "checksum": checksum,
+                "size": size_kb,
+                "data_chunk": b64_data  # Đây là 'linh hồn' của file để Agent tải về
+            }).execute()
+            
+            if res.data:
+                st.session_state["current_artifact_id"] = res.data[0]["id"]
+                st.success(f"✅ Đã đóng gói thành công Artifact #{res.data[0]['id']}")
+                st.rerun()
     # 2️⃣ UPLOAD ARTIFACT
     with st.expander("⬆️ Bước 1: Upload Artifact (File + Metadata)", expanded=True):
         file = st.file_uploader("Chọn file triển khai", type=["bin", "zip", "json", "cfg", "sdf"])
