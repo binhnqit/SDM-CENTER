@@ -906,17 +906,37 @@ with t_sum:
         st.warning("Đang chờ dữ liệu từ hệ thống Agent...")
 with t_offline:
     st.header("🕵️ AI Forensics – Investigator Mode")
-    st.caption("Phiên bản V3.7: Event Chain & Evidence Binding")
+    st.caption("Phiên bản V3.7: Truy vết sự kiện và bằng chứng số dựa trên định danh Hostname.")
 
     df_evt = pd.DataFrame()
 
-    # 1. CONTROL PLANE
+    # --- 0. CHUẨN BỊ MAPPING HOSTNAME ---
+    # Tạo danh sách gợi ý để sếp chọn cho nhanh
+    host_options = []
+    host_to_id = {}
+    if not df_inv.empty:
+        for _, row in df_inv.iterrows():
+            label = f"{row['hostname']} | {row.get('username', 'User')}"
+            host_options.append(label)
+            host_to_id[label] = row['machine_id']
+
+    # --- 1. CONTROL PLANE (CHỌN MÁY THEO TÊN) ---
     c_id, c_days = st.columns([2, 1])
-    target_id = c_id.text_input("🔍 Machine ID", placeholder="Nhập ID để dựng hiện trường...")
-    days = c_days.slider("Hồi tố", 1, 90, 14)
+    
+    selected_label = c_id.selectbox(
+        "🔍 Chọn thiết bị dựng hiện trường (Hostname):", 
+        options=["-- Chọn máy --"] + host_options,
+        index=0,
+        help="Gõ để tìm kiếm tên máy nhanh"
+    )
+    
+    # Lấy ID thực tế từ lựa chọn Hostname
+    target_id = host_to_id.get(selected_label)
+    days = c_days.slider("Hồi tố (Ngày)", 1, 90, 14)
 
     if target_id:
         try:
+            # Truy vấn dựa trên ID gốc nhưng hiển thị cho sếp theo Hostname
             res = (sb.table("device_events")
                   .select("*")
                   .eq("machine_id", target_id)
@@ -925,27 +945,23 @@ with t_offline:
             df_evt = pd.DataFrame(res.data)
 
             if not df_evt.empty:
-                # 🟦 4️⃣ CONCLUSION BLOCK (AI kết luận cuối cùng)
-                st.markdown("### 🧠 AI Final Conclusion")
+                # 🟦 4️⃣ CONCLUSION BLOCK (AI kết luận)
+                st.markdown(f"### 🧠 AI Conclusion for `{selected_label.split(' | ')[0]}`")
                 with st.container(border=True):
-                    # Phân tích sơ bộ để AI kết luận
                     has_tamper = "AGENT_KILLED" in df_evt['event_type'].values
                     max_off = df_evt['off_minutes'].max()
                     
                     if has_tamper:
-                        st.error("🚨 **KẾT LUẬN:** Phát hiện hành vi can thiệp trái phép. Agent bị tắt chủ động từ Process Manager. Cần kiểm tra lịch sử đăng nhập User.")
+                        st.error("🚨 **KẾT LUẬN:** Phát hiện hành vi can thiệp trái phép. Agent bị tắt chủ động. Cần kiểm tra lịch sử đăng nhập User.")
                     elif max_off > 30:
-                        st.warning("⚠️ **KẾT LUẬN:** Sự cố hạ tầng nghiêm trọng. Máy mất nguồn hoặc mất mạng diện rộng trong thời gian dài. Khả năng cao là lỗi **POWER** hoặc **HARDWARE**.")
+                        st.warning("⚠️ **KẾT LUẬN:** Sự cố hạ tầng nghiêm trọng. Máy mất nguồn hoặc mất mạng diện rộng.")
                     else:
-                        st.info("ℹ️ **KẾT LUẬN:** Hệ thống hoạt động trong điều kiện mạng không ổn định (Network Instability).")
+                        st.info("ℹ️ **KẾT LUẬN:** Hệ thống hoạt động trong điều kiện mạng không ổn định.")
 
-                # 🟧 1️⃣ EVENT CHAIN INFERENCE & 2️⃣ CAUSE LABEL
+                # 🟧 1️⃣ EVENT CHAIN ANALYSIS
                 st.markdown("### 🔗 Event Chain Analysis")
-                
-                # Vẽ chuỗi sự kiện (Simplified Chain)
-                chain_cols = st.columns(len(df_evt[:4]) if len(df_evt) >= 1 else 1)
+                chain_cols = st.columns(min(len(df_evt), 4))
                 for i, (_, row) in enumerate(df_evt[:4].iterrows()):
-                    # Xác định Cause Label (2️⃣)
                     cause_label = row.get('event_category', 'UNKNOWN')
                     if "KILLED" in row['event_type']: cause_label = "AGENT"
                     elif "OFFLINE" in row['event_type']: cause_label = "NETWORK"
@@ -964,12 +980,10 @@ with t_offline:
                         col_l, col_r = st.columns([2, 1])
                         with col_l:
                             st.json(row.get('details', {}))
-                            
-                            # Kiểm tra Snapshot Binding (3️⃣)
                             details = row.get('details', {})
                             if isinstance(details, dict) and "snapshot_hash" in details:
                                 st.success(f"📎 **Evidence Attached:** `{details['snapshot_hash']}`")
-                                st.caption("Snapshot ghi lại trạng thái Process List & Network Connections lúc sự cố.")
+                                st.caption("Snapshot ghi lại trạng thái Process List lúc sự cố.")
                             else:
                                 st.caption("No snapshot bound to this event.")
 
@@ -977,12 +991,20 @@ with t_offline:
                             st.metric("Cause", cause_label)
                             st.metric("Offline", f"{row['off_minutes']}m")
 
+            else:
+                st.info(f"Không tìm thấy sự kiện nào trong {days} ngày qua cho máy này.")
+
         except Exception as e:
             st.error(f"❌ Forensic Error: {e}")
 
 # --- EXPORT ---
 if not df_evt.empty:
-    st.download_button("📥 Export Forensic Report", df_evt.to_json(), f"Forensic_{target_id}.json")
+    st.download_button(
+        "📥 Export Forensic Report", 
+        df_evt.to_json(), 
+        f"Forensic_{selected_label.split(' | ')[0]}.json",
+        use_container_width=True
+    )
 import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu file
 
 # --- TRƯỚC HẾT: PHẢI CÓ CLASS NÀY THÌ TAB AI MỚI CHẠY ĐƯỢC ---
