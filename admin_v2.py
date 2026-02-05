@@ -332,19 +332,25 @@ with t_tokens:
             st.success(f"Đã cấp Token cho {new_owner}")
 
 with t_mon:
-    st.subheader("🖥️ Trung tâm Giám sát Thiết bị")
+    st.header("🖥️ Device Monitoring Center")
+    st.caption("Trạng thái thời gian thực từ hệ thống Agent V15-Enterprise")
     
-    # --- 1. LOAD DỮ LIỆU QUA RPC ---
+    # --- 1. LOAD DỮ LIỆU QUA RPC (Lấy bản ghi mới nhất của mỗi máy) ---
     try:
-        # Gọi hàm SQL RPC sếp đã tạo
         res = sb.rpc("latest_agent_heartbeats").execute()
+        # Chuyển dữ liệu RPC thành DataFrame chính cho toàn app
         df_hb = pd.DataFrame(res.data)
+        
+        # Cập nhật ngược lại df_d để các Tab khác (như Deployment) dùng chung
+        # Tránh lỗi KeyError: dealer_col khi df_d rỗng
+        df_d = df_hb.copy() 
     except Exception as e:
         st.error(f"❌ Lỗi kết nối RPC: {e}")
         df_hb = pd.DataFrame()
+        df_d = pd.DataFrame() # Đảm bảo không bị None
 
     if not df_hb.empty:
-        # --- 2. PHÂN LOẠI ONLINE / DEAD (CHUẨN STEP 2) ---
+        # --- 2. XỬ LÝ THỜI GIAN & TRẠNG THÁI ---
         now_dt = datetime.now(timezone.utc)
         df_hb['received_at_dt'] = pd.to_datetime(df_hb['received_at'], utc=True)
         
@@ -360,9 +366,9 @@ with t_mon:
 
         df_hb['monitor_state'] = df_hb['off_minutes'].apply(resolve_state)
 
-        # --- 3. METRICS TỔNG HỢP ---
+        # --- 3. DASHBOARD METRICS ---
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🟢 Sẵn sàng", len(df_hb[df_hb['monitor_state'] == "🟢 Online"]))
+        m1.metric("🟢 Trực tuyến", len(df_hb[df_hb['monitor_state'] == "🟢 Online"]))
         m2.metric("🟡 Tín hiệu yếu", len(df_hb[df_hb['monitor_state'] == "🟡 Unstable"]))
         m3.metric("🔴 Ngoại tuyến", len(df_hb[df_hb['monitor_state'] == "🔴 Offline"]))
         m4.metric("⚫ Mất kết nối", len(df_hb[df_hb['monitor_state'] == "⚫ Dead"]))
@@ -371,47 +377,60 @@ with t_mon:
         st.write("---")
         c_search1, c_search2 = st.columns([1, 2])
         with c_search1:
-            search_query = st.text_input("👤 Tìm User/Hostname:", placeholder="Nhập tên...")
+            search_query = st.text_input("👤 Tìm User/Hostname:", placeholder="Tên máy, người dùng...", key="mon_search")
         with c_search2:
-            state_filter = st.multiselect("Lọc trạng thái:", 
-                                         ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"],
-                                         default=["🟢 Online", "🟡 Unstable", "🔴 Offline"])
+            all_states = ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"]
+            state_filter = st.multiselect("Lọc theo trạng thái:", all_states, default=all_states[:3])
 
-        # Thực thi lọc
-        filtered_df = df_hb[df_hb['monitor_state'].isin(state_filter)]
+        # Thực thi Filter
+        f_df = df_hb[df_hb['monitor_state'].isin(state_filter)]
         if search_query:
-            filtered_df = filtered_df[
-                (filtered_df['username'].str.contains(search_query, case=False, na=False)) |
-                (filtered_df['hostname'].str.contains(search_query, case=False, na=False))
+            f_df = f_df[
+                (f_df['username'].str.contains(search_query, case=False, na=False)) |
+                (f_df['hostname'].str.contains(search_query, case=False, na=False)) |
+                (f_df['machine_id'].str.contains(search_query, case=False, na=False))
             ]
 
-        # --- 5. HIỂN THỊ BẢNG (STEP 3) ---
+        # --- 5. DATA TABLE (Chuẩn Step 3) ---
+        # Sắp xếp máy mới nhất lên đầu
+        f_df = f_df.sort_values("received_at", ascending=False)
+        
         st.dataframe(
-            filtered_df[['username', 'hostname', 'machine_id', 'monitor_state', 
-                         'operational_state', 'off_minutes', 'cpu_usage', 'ram_usage', 'received_at']],
+            f_df[['username', 'hostname', 'monitor_state', 'operational_state', 
+                 'cpu_usage', 'ram_usage', 'off_minutes', 'received_at', 'machine_id']],
             column_config={
-                "username": "👤 User",
+                "username": st.column_config.TextColumn("👤 User", width="medium"),
                 "hostname": "💻 Hostname",
-                "machine_id": "🆔 Machine ID",
                 "monitor_state": "Trạng thái",
-                "operational_state": st.column_config.BadgeColumn("Agent Mode", help="READY/LOCKED từ Agent V15"),
-                "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f min"),
+                "operational_state": st.column_config.BadgeColumn(
+                    "Agent Mode", 
+                    help="READY: Bình thường | LOCKED: Đang khóa máy",
+                    mapping={"READY": "green", "LOCKED": "red"}
+                ),
                 "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
                 "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
-                "received_at": "Heartbeat cuối"
+                "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f m"),
+                "received_at": "Heartbeat cuối",
+                "machine_id": "🆔 ID"
             },
             use_container_width=True,
             hide_index=True
         )
 
-        # --- 6. GỢI Ý FORENSIC (LUỒNG 4) ---
-        critical_machines = filtered_df[filtered_df['off_minutes'] > 10]
-        if not critical_machines.empty:
-            st.warning(f"🚨 Phát hiện {len(critical_machines)} máy có dấu hiệu sự cố. Hãy kiểm tra tab **AI Forensics**.")
+        # --- 6. AUTO-FORENSIC ALERT (Luồng 4) ---
+        # Tự động gợi ý kiểm tra nếu có máy Offline bất thường
+        offline_crit = f_df[f_df['off_minutes'] > 10]
+        if not offline_crit.empty:
+            with st.container(border=True):
+                st.warning(f"🚨 **Cảnh báo điều tra:** Phát hiện {len(offline_crit)} thiết bị mất kết nối > 10 phút.")
+                if st.button("🔎 Chuyển sang Tab AI Forensics để phân tích"):
+                    st.session_state["active_tab"] = "🕵️ AI Forensics" # Giả định sếp có cơ chế chuyển tab
+                    st.rerun()
 
     else:
-        st.info("📡 Đang chờ tín hiệu từ các máy trạm...")
-
+        st.info("📡 Đang chờ tín hiệu từ các máy trạm... Hãy đảm bảo Agent đã được chạy.")
+        if st.button("🔄 Thử tải lại dữ liệu"):
+            st.rerun()
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
     st.caption("Chọn thiết bị theo danh sách, theo đại lý hoặc theo mức độ rủi ro để thực thi lệnh.")
