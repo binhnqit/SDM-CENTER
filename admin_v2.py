@@ -334,6 +334,9 @@ with t_tokens:
             st.success(f"Đã cấp Token cho {new_owner}")
 
 with t_mon:
+    # --- 0. CẤU HÌNH BIẾN TOÀN CỤC (Dùng cho cả Tab Deployment/Dealer) ---
+    dealer_col = "location" 
+
     st.header("🖥️ Device Monitoring Center")
     st.caption(f"Trạng thái thời gian thực từ hệ thống Agent {AGENT_VERSION}")
     
@@ -343,31 +346,31 @@ with t_mon:
         df_hb = pd.DataFrame(res.data)
         
         if not df_hb.empty:
-            # Đồng bộ hóa df_d để các Tab khác (Deployment/Dealer) không bị KeyError
+            # Đồng bộ hóa df_d để các Tab khác không bị KeyError khi Groupby
             df_d = df_hb.copy()
             
-            # Khai báo dealer_col đồng bộ với SQL Join (cột 'location')
-            # Nếu sếp đã khai báo dealer_col ở đầu file thì code sẽ lấy giá trị đó
-            if 'dealer_col' not in locals() and 'dealer_col' not in globals():
-                dealer_col = "location" 
-            
-            # Cứu hộ: Nếu df_d thiếu cột dealer_col, tự tạo để tránh crash groupby
+            # Khắc phục triệt để lỗi KeyError: 
+            # Đảm bảo cột dealer_col tồn tại ngay cả khi SQL Join gặp vấn đề
             if dealer_col not in df_d.columns:
-                df_d[dealer_col] = "Chưa phân loại"
+                if 'location' in df_d.columns:
+                    df_d[dealer_col] = df_d['location']
+                else:
+                    df_d[dealer_col] = "Chưa phân loại"
         else:
-            df_d = pd.DataFrame()
+            # Tạo DataFrame rỗng có sẵn cột để tránh crash các tab sau
+            df_d = pd.DataFrame(columns=[dealer_col, 'machine_id', 'hostname'])
             
     except Exception as e:
         st.error(f"❌ Lỗi kết nối dữ liệu: {e}")
         df_hb = pd.DataFrame()
-        df_d = pd.DataFrame()
+        df_d = pd.DataFrame(columns=[dealer_col])
 
     if not df_hb.empty:
-        # --- 2. XỬ LÝ THỜI GIAN CHUẨN UTC ---
+        # --- 2. XỬ LÝ THỜI GIAN CHUẨN UTC (Fix lệch 7 tiếng) ---
         now_dt = datetime.now(timezone.utc)
         df_hb['received_at_dt'] = pd.to_datetime(df_hb['received_at'], utc=True)
         
-        # Tính phút vắng mặt (Fix lỗi lệch 7 tiếng)
+        # Tính phút vắng mặt
         df_hb['off_minutes'] = (now_dt - df_hb['received_at_dt']).dt.total_seconds() / 60
         df_hb['off_minutes'] = df_hb['off_minutes'].apply(lambda x: max(0, round(x, 1)))
 
@@ -456,7 +459,8 @@ with t_mon:
                 "App UTC Now": now_dt.isoformat(),
                 "First Heartbeat UTC": df_hb['received_at'].iloc[0] if not df_hb.empty else None,
                 "Dealer Column Mapping": dealer_col,
-                "Total Records": len(df_hb)
+                "Total Records": len(df_hb),
+                "Columns in df_d": list(df_d.columns)
             })
 
     else:
