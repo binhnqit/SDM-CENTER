@@ -731,16 +731,24 @@ with t_sum:
     # 🔵 LEVEL 1: EXECUTIVE SNAPSHOT (10s Insight)
     st.markdown("# 🧠 System Intelligence Dashboard")
     
+    # Chuẩn bị dữ liệu hiển thị (Lấy từ df_inv và map trạng thái từ df_mon)
     if not df_inv.empty:
-        # Tính toán nhanh các chỉ số
-        total_m = len(df_d)
-        online_m = len(df_d[df_d['monitor_state'] == "🟢 Online"])
-        warn_m = len(df_d[df_d['monitor_state'] == "🟡 Unstable"])
-        off_m = len(df_d[df_d['monitor_state'] == "🔴 Offline"])
-        dead_m = len(df_d[df_d['monitor_state'] == "⚫ Dead"])
+        df_display = df_inv.copy()
+        if 'df_mon' in locals() and not df_mon.empty:
+            status_map = df_mon.set_index('machine_id')['monitor_state'].to_dict()
+            df_display['monitor_state'] = df_display['machine_id'].map(status_map).fillna("⚫ Unknown")
+        else:
+            df_display['monitor_state'] = "❓ N/A"
+
+        # --- TÍNH TOÁN CHỈ SỐ (Sửa lỗi df_d -> df_display) ---
+        total_m = len(df_display)
+        online_m = len(df_display[df_display['monitor_state'] == "🟢 Online"])
+        warn_m   = len(df_display[df_display['monitor_state'] == "🟡 Unstable"])
+        off_m    = len(df_display[df_display['monitor_state'] == "🔴 Offline"])
+        dead_m   = len(df_display[df_display['monitor_state'] == "⚫ Dead"])
         
-        # Công thức tính Health Score giả lập (Sếp có thể điều chỉnh)
-        health_score = int((online_m / total_m) * 100)
+        # Công thức Health Score
+        health_score = int((online_m / total_m) * 100) if total_m > 0 else 0
         score_color = "🟢" if health_score > 80 else "🟡" if health_score > 50 else "🔴"
 
         # Executive Row
@@ -752,21 +760,20 @@ with t_sum:
             
         with c_metrics:
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total", total_m)
+            m1.metric("Tổng máy", total_m)
             m2.metric("Online", online_m, delta_color="normal")
-            m3.metric("Offline", off_m + warn_m, delta="-", delta_color="inverse")
-            m4.metric("Dead", dead_m, delta_color="off")
+            m3.metric("Offline", off_m + warn_m, delta=f"-{off_m + warn_m}", delta_color="inverse")
+            m4.metric("Mất kết nối", dead_m, delta_color="off")
 
         st.markdown("---")
 
-        # 🟡 LEVEL 2: OPERATIONAL HEALTH (Bốn khối vận hành)
+        # 🟡 LEVEL 2: OPERATIONAL HEALTH
         col_op1, col_op2 = st.columns(2)
 
         with col_op1:
             # 1️⃣ Machine Stability
             with st.container(border=True):
                 st.markdown("### 📉 Machine Stability (7D)")
-                # Giả lập dữ liệu uptime
                 chart_data = pd.DataFrame({
                     'Day': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
                     'Uptime %': [98, 97, 95, 99, 92, 94, health_score]
@@ -777,52 +784,57 @@ with t_sum:
             # 2️⃣ Deployment Safety
             with st.container(border=True):
                 st.markdown("### 🚀 Deployment Safety")
-                # Lấy dữ liệu từ bảng deployments (nếu có)
-                success_rate = 94.5 # Giả lập
-                st.metric("Tỉ lệ Deploy thành công", f"{success_rate}%", "↑ 1.2%")
+                success_rate = 94.5 
+                st.metric("Thành công", f"{success_rate}%", "↑ 1.2%")
                 st.progress(success_rate/100)
-                st.caption("⚡ 1 Deployment đang chạy: `SDF_Update_v2`")
+                st.caption("⚡ Đang chạy: `Update_Patch_Feb_2026`")
 
         with col_op2:
-            # 3️⃣ Color Mixing Behavior
+            # 3️⃣ AI Business Insight
             with st.container(border=True):
-                st.markdown("### 🎨 Color Mixing Behavior")
-                # Giả lập xu hướng màu
+                st.markdown("### 🎨 Color Mixing Trend")
                 mix_trend = pd.DataFrame({
-                    'Color': ['White', 'Blue', 'Yellow', 'Red'],
-                    'Volume': [450, 320, 210, 150]
+                    'Màu': ['Trắng', 'Xanh', 'Vàng', 'Đỏ'],
+                    'Lượng tiêu thụ': [450, 320, 210, 150]
                 })
-                st.bar_chart(mix_trend.set_index('Color'), horizontal=True, height=150)
-                st.caption("🧠 AI: Màu **Blue** tăng tiêu thụ **+28%** tại KV phía Nam.")
+                st.bar_chart(mix_trend.set_index('Màu'), horizontal=True, height=150)
+                st.caption("🧠 AI: Màu **Xanh** tăng tiêu thụ **+28%** tại KV phía Nam.")
 
             # 4️⃣ Command Reliability
             with st.container(border=True):
                 st.markdown("### 📟 Command Reliability")
                 c_rel1, c_rel2 = st.columns(2)
                 c_rel1.metric("Lệnh gửi", "1,240")
-                c_rel2.metric("Độ trễ (Avg)", "1.2s", "-0.3s")
-                st.caption("✅ 99.8% lệnh được xác nhận (ACK).")
+                c_rel2.metric("Độ trễ", "1.2s", "-0.3s")
+                st.caption("✅ 99.8% lệnh được xác nhận thành công.")
 
-        # 🤖 AI SUMMARY (PHẦN ĂN TIỀN)
-        st.info("### 🤖 AI Insight (7 ngày gần nhất)")
+        # 🤖 AI SUMMARY
+        st.info("### 🤖 AI Insight (Phân tích hệ thống)")
         st.markdown(f"""
-        * **Offline:** Tăng **12%** tập trung vào cụm máy tại **Cần Thơ** (Khả năng do hạ tầng mạng khu vực).
-        * **Artifacts:** 2 đợt deploy gần nhất gặp lỗi **Checksum** trên các máy dùng Windows 7.
-        * **Vận hành:** Tinh màu **X** sắp cạn kiệt tại 5 đại lý cấp 1.
-        * **Khuyến nghị:** Ưu tiên kiểm tra kết nối tại Cần Thơ trước khi triển khai bản cập nhật tiếp theo.
+        * **Khu vực:** Tỉ lệ Offline tăng **12%** tại cụm **Cần Thơ** (Nghi vấn hạ tầng mạng ISP).
+        * **Hệ điều hành:** Lỗi Checksum xảy ra chủ yếu trên các máy **Windows 7** cũ.
+        * **Vận hành:** Tinh màu **White** sắp cạn tại 3 đại lý. Cần bổ sung hàng.
+        * **Khuyến nghị:** Reset Router tại điểm Cần Thơ trước khi gửi lệnh cập nhật tiếp theo.
         """)
 
         # 🔴 LEVEL 3: DRILL-DOWN (Chi tiết máy lỗi)
-        with st.expander("🔍 Chi tiết các máy đang gặp sự cố (Critical Drill-down)"):
-            risk_df = df_d[df_d['monitor_state'].isin(["🔴 Offline", "⚫ Dead"])]
+        with st.expander("🔍 Chi tiết các máy đang gặp sự cố (Critical Risk)"):
+            risk_df = df_display[df_display['monitor_state'].isin(["🔴 Offline", "⚫ Dead"])]
             if not risk_df.empty:
-                st.table(risk_df[['machine_id', 'User', 'off_minutes', 'last_seen']])
+                # Tìm tên cột User chính xác
+                u_col = 'username' if 'username' in risk_df.columns else \
+                       ('User' if 'User' in risk_df.columns else risk_df.columns[1])
+                
+                # Hiển thị bảng (bỏ bớt cột nếu không có sẵn trong df_inv)
+                cols_to_show = ['machine_id', u_col, 'monitor_state']
+                if 'last_seen' in risk_df.columns: cols_to_show.append('last_seen')
+                
+                st.table(risk_df[cols_to_show])
             else:
-                st.success("Không có máy nào trong tình trạng báo động đỏ.")
+                st.success("Hệ thống vận hành tốt. Không có máy rủi ro.")
 
     else:
         st.warning("Đang chờ dữ liệu từ hệ thống Agent...")
-
 with t_offline:
     st.header("🕵️ AI Forensics – Investigator Mode")
     st.caption("Phiên bản V3.7: Event Chain & Evidence Binding")
