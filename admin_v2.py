@@ -337,31 +337,28 @@ with t_mon:
     st.header("🖥️ Device Monitoring Center")
     st.caption(f"Trạng thái thời gian thực từ hệ thống Agent {AGENT_VERSION}")
     
-    # --- 1. LOAD DỮ LIỆU QUA RPC ---
-    # --- 1. LOAD DỮ LIỆU QUA RPC ---
+    # --- 1. LOAD DỮ LIỆU QUA RPC (Hỗ trợ JOIN Metadata) ---
     try:
         res = sb.rpc("latest_agent_heartbeats").execute()
         df_hb = pd.DataFrame(res.data)
         
         if not df_hb.empty:
-            # Tạo bản sao df_d cho các Tab khác
+            # Đồng bộ hóa df_d để các Tab khác (Deployment/Dealer) không bị KeyError
             df_d = df_hb.copy()
             
-            # 🔥 FIX LỖI KEYERROR: Thêm cột dealer_col nếu nó chưa tồn tại
-            # Giả sử dealer_col của sếp đang đặt là 'dealer_name' hoặc 'branch'
-            if 'dealer_col' in globals() or 'dealer_col' in locals():
-                actual_col_name = dealer_col
-            else:
-                actual_col_name = "Chi nhánh" # Tên mặc định để tránh crash
-                dealer_col = "Chi nhánh"
-                
-            if actual_col_name not in df_d.columns:
-                df_d[actual_col_name] = "Chưa phân loại" 
+            # Khai báo dealer_col đồng bộ với SQL Join (cột 'location')
+            # Nếu sếp đã khai báo dealer_col ở đầu file thì code sẽ lấy giá trị đó
+            if 'dealer_col' not in locals() and 'dealer_col' not in globals():
+                dealer_col = "location" 
+            
+            # Cứu hộ: Nếu df_d thiếu cột dealer_col, tự tạo để tránh crash groupby
+            if dealer_col not in df_d.columns:
+                df_d[dealer_col] = "Chưa phân loại"
         else:
             df_d = pd.DataFrame()
             
     except Exception as e:
-        st.error(f"❌ Lỗi kết nối RPC: {e}")
+        st.error(f"❌ Lỗi kết nối dữ liệu: {e}")
         df_hb = pd.DataFrame()
         df_d = pd.DataFrame()
 
@@ -370,11 +367,11 @@ with t_mon:
         now_dt = datetime.now(timezone.utc)
         df_hb['received_at_dt'] = pd.to_datetime(df_hb['received_at'], utc=True)
         
-        # Tính phút vắng mặt
+        # Tính phút vắng mặt (Fix lỗi lệch 7 tiếng)
         df_hb['off_minutes'] = (now_dt - df_hb['received_at_dt']).dt.total_seconds() / 60
         df_hb['off_minutes'] = df_hb['off_minutes'].apply(lambda x: max(0, round(x, 1)))
 
-        # --- 3. ĐỊNH NGHĨA TRẠNG THÁI ---
+        # --- 3. LOGIC TRẠNG THÁI & HIỂN THỊ ---
         def resolve_state(mins):
             if mins <= 3: return "🟢 Online"
             if mins <= 10: return "🟡 Unstable"
@@ -383,33 +380,26 @@ with t_mon:
 
         df_hb['monitor_state'] = df_hb['off_minutes'].apply(resolve_state)
         
-        # Thêm icon trực quan cho Mode (Vì không dùng được BadgeColumn)
+        # Icon hóa trạng thái Agent Mode
         df_hb['mode_display'] = df_hb['operational_state'].apply(
             lambda x: "🔐 LOCKED" if x == "LOCKED" else "✅ READY"
         )
 
-        # --- DEBUG EXPANDER ---
-        with st.expander("🕵️ Hệ thống Debug Timezone"):
-            c1, c2, c3 = st.columns(3)
-            c1.write(f"**Giờ hiện tại (UTC):** {now_dt.strftime('%H:%M:%S')}")
-            c2.write(f"**Giờ Agent gửi (UTC):** {df_hb['received_at_dt'].iloc[0].strftime('%H:%M:%S')}")
-            c3.write(f"**Chênh lệch:** {df_hb['off_minutes'].iloc[0]} phút")
-
         # --- 4. DASHBOARD METRICS ---
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🟢 Trực tuyến", len(df_hb[df_hb['monitor_state'] == "🟢 Online"]))
-        m2.metric("🟡 Tín hiệu yếu", len(df_hb[df_hb['monitor_state'] == "🟡 Unstable"]))
-        m3.metric("🔴 Ngoại tuyến", len(df_hb[df_hb['monitor_state'] == "🔴 Offline"]))
-        m4.metric("⚫ Mất kết nối", len(df_hb[df_hb['monitor_state'] == "⚫ Dead"]))
+        with m1: st.metric("🟢 Online", len(df_hb[df_hb['monitor_state'] == "🟢 Online"]))
+        with m2: st.metric("🟡 Unstable", len(df_hb[df_hb['monitor_state'] == "🟡 Unstable"]))
+        with m3: st.metric("🔴 Offline", len(df_hb[df_hb['monitor_state'] == "🔴 Offline"]))
+        with m4: st.metric("⚫ Dead", len(df_hb[df_hb['monitor_state'] == "⚫ Dead"]))
 
         # --- 5. BỘ LỌC TƯƠNG TÁC ---
         st.write("---")
         c_search1, c_search2 = st.columns([1, 2])
         with c_search1:
-            search_query = st.text_input("👤 Tìm kiếm:", placeholder="User, Hostname, ID...", key="mon_search")
+            search_query = st.text_input("🔍 Tìm máy/người dùng:", placeholder="Nhập tên, ID...", key="mon_search")
         with c_search2:
             all_states = ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"]
-            state_filter = st.multiselect("Lọc trạng thái:", all_states, default=all_states[:2])
+            state_filter = st.multiselect("Lọc trạng thái hiển thị:", all_states, default=all_states[:2])
 
         # Thực thi Filter
         f_df = df_hb[df_hb['monitor_state'].isin(state_filter)]
@@ -420,23 +410,23 @@ with t_mon:
                 (f_df['machine_id'].str.contains(search_query, case=False, na=False))
             ]
 
-        # --- 6. DATA TABLE (SỬ DỤNG TEXTCOLUMN ĐỂ FIX LỖI ATTRIBUTEERROR) ---
+        # --- 6. DATA TABLE (Bản ổn định cao) ---
         f_df = f_df.sort_values("received_at", ascending=False)
         
         st.dataframe(
-            f_df[['username', 'hostname', 'monitor_state', 'mode_display', 
-                  'cpu_usage', 'ram_usage', 'heartbeat_seq', 'off_minutes', 'received_at', 'machine_id']],
+            f_df[['username', 'hostname', 'location', 'monitor_state', 'mode_display', 
+                  'cpu_usage', 'ram_usage', 'heartbeat_seq', 'off_minutes', 'received_at']],
             column_config={
                 "username": st.column_config.TextColumn("👤 User"),
                 "hostname": "💻 Hostname",
+                "location": "📍 Vị trí/Đại lý",
                 "monitor_state": "Trạng thái",
-                "mode_display": st.column_config.TextColumn("Agent Mode", help="READY: Bình thường | LOCKED: Đang khóa máy"),
+                "mode_display": "Agent Mode",
                 "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
                 "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
-                "heartbeat_seq": st.column_config.NumberColumn("Seq #"),
+                "heartbeat_seq": st.column_config.NumberColumn("Seq", help="Nhịp tim liên tục"),
                 "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f m"),
-                "received_at": "Lần cuối thấy",
-                "machine_id": "🆔 ID"
+                "received_at": "Lần cuối"
             },
             use_container_width=True,
             hide_index=True
@@ -444,22 +434,34 @@ with t_mon:
 
         # --- 7. QUICK CONTROL PANEL ---
         st.write("---")
-        st.subheader("⚡ Điều khiển nhanh")
-        ctrl_c1, ctrl_c2, ctrl_c3 = st.columns([2, 1, 1])
-        with ctrl_c1:
-            target_machine = st.selectbox("Chọn máy trạm:", f_df['machine_id'].unique())
-        with ctrl_c2:
-            if st.button("🔒 LOCK", type="primary", use_container_width=True):
+        col_ctrl1, col_ctrl2 = st.columns([2, 1])
+        with col_ctrl1:
+            st.subheader("⚡ Remote Control")
+            target_machine = st.selectbox("Chọn thiết bị mục tiêu:", f_df['machine_id'].unique() if 'machine_id' in f_df.columns else [])
+        
+        with col_ctrl2:
+            st.write("") # Padding
+            st.write("")
+            btn_lock, btn_unlock = st.columns(2)
+            if btn_lock.button("🔒 LOCK", type="primary", use_container_width=True):
                 sb.table("commands").insert({"machine_id": target_machine, "command": "LOCK", "is_executed": False}).execute()
                 st.toast(f"Đã gửi lệnh KHÓA tới {target_machine}")
-        with ctrl_c3:
-            if st.button("🔓 UNLOCK", use_container_width=True):
+            if btn_unlock.button("🔓 UNLOCK", use_container_width=True):
                 sb.table("commands").insert({"machine_id": target_machine, "command": "UNLOCK", "is_executed": False}).execute()
                 st.toast(f"Đã gửi lệnh MỞ KHÓA tới {target_machine}")
 
+        # --- 8. DEBUG SYSTEM ---
+        with st.expander("🛠️ System Debug Information"):
+            st.json({
+                "App UTC Now": now_dt.isoformat(),
+                "First Heartbeat UTC": df_hb['received_at'].iloc[0] if not df_hb.empty else None,
+                "Dealer Column Mapping": dealer_col,
+                "Total Records": len(df_hb)
+            })
+
     else:
-        st.info("📡 Chưa có dữ liệu nhịp tim từ Agent.")
-        if st.button("🔄 Reload"): st.rerun()
+        st.info("📡 Hệ thống đang sẵn sàng. Đang chờ Agent gửi tín hiệu đầu tiên...")
+        if st.button("🔄 Thử tải lại"): st.rerun()
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
     st.caption("Chọn thiết bị theo danh sách, theo đại lý hoặc theo mức độ rủi ro để thực thi lệnh.")
