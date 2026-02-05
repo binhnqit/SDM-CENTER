@@ -348,22 +348,15 @@ with t_mon:
         df_hb = pd.DataFrame()
 
     if not df_hb.empty:
-        # --- 2. XỬ LÝ THỜI GIAN CHUẨN UTC (Sửa lỗi lệch 7 tiếng) ---
+        # --- 2. XỬ LÝ THỜI GIAN CHUẨN UTC ---
         now_dt = datetime.now(timezone.utc)
-        # Ép kiểu datetime và đảm bảo là UTC
         df_hb['received_at_dt'] = pd.to_datetime(df_hb['received_at'], utc=True)
         
         # Tính phút vắng mặt
         df_hb['off_minutes'] = (now_dt - df_hb['received_at_dt']).dt.total_seconds() / 60
         df_hb['off_minutes'] = df_hb['off_minutes'].apply(lambda x: max(0, round(x, 1)))
 
-        # --- DEBUG EXPANDER (Chỉ hiện khi cần soi lỗi) ---
-        with st.expander("🕵️ Hệ thống Debug Timezone"):
-            c1, c2, c3 = st.columns(3)
-            c1.write(f"**Giờ hiện tại (UTC):** {now_dt.strftime('%H:%M:%S')}")
-            c2.write(f"**Giờ Agent gửi (UTC):** {df_hb['received_at_dt'].iloc[0].strftime('%H:%M:%S')}")
-            c3.write(f"**Chênh lệch:** {df_hb['off_minutes'].iloc[0]} phút")
-
+        # --- 3. ĐỊNH NGHĨA TRẠNG THÁI ---
         def resolve_state(mins):
             if mins <= 3: return "🟢 Online"
             if mins <= 10: return "🟡 Unstable"
@@ -371,15 +364,27 @@ with t_mon:
             return "⚫ Dead"
 
         df_hb['monitor_state'] = df_hb['off_minutes'].apply(resolve_state)
+        
+        # Thêm icon trực quan cho Mode (Vì không dùng được BadgeColumn)
+        df_hb['mode_display'] = df_hb['operational_state'].apply(
+            lambda x: "🔐 LOCKED" if x == "LOCKED" else "✅ READY"
+        )
 
-        # --- 3. DASHBOARD METRICS ---
+        # --- DEBUG EXPANDER ---
+        with st.expander("🕵️ Hệ thống Debug Timezone"):
+            c1, c2, c3 = st.columns(3)
+            c1.write(f"**Giờ hiện tại (UTC):** {now_dt.strftime('%H:%M:%S')}")
+            c2.write(f"**Giờ Agent gửi (UTC):** {df_hb['received_at_dt'].iloc[0].strftime('%H:%M:%S')}")
+            c3.write(f"**Chênh lệch:** {df_hb['off_minutes'].iloc[0]} phút")
+
+        # --- 4. DASHBOARD METRICS ---
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("🟢 Trực tuyến", len(df_hb[df_hb['monitor_state'] == "🟢 Online"]))
         m2.metric("🟡 Tín hiệu yếu", len(df_hb[df_hb['monitor_state'] == "🟡 Unstable"]))
         m3.metric("🔴 Ngoại tuyến", len(df_hb[df_hb['monitor_state'] == "🔴 Offline"]))
         m4.metric("⚫ Mất kết nối", len(df_hb[df_hb['monitor_state'] == "⚫ Dead"]))
 
-        # --- 4. BỘ LỌC TƯƠNG TÁC ---
+        # --- 5. BỘ LỌC TƯƠNG TÁC ---
         st.write("---")
         c_search1, c_search2 = st.columns([1, 2])
         with c_search1:
@@ -397,23 +402,20 @@ with t_mon:
                 (f_df['machine_id'].str.contains(search_query, case=False, na=False))
             ]
 
-        # --- 5. DATA TABLE ---
+        # --- 6. DATA TABLE (SỬ DỤNG TEXTCOLUMN ĐỂ FIX LỖI ATTRIBUTEERROR) ---
         f_df = f_df.sort_values("received_at", ascending=False)
         
         st.dataframe(
-            f_df[['username', 'hostname', 'monitor_state', 'operational_state', 
+            f_df[['username', 'hostname', 'monitor_state', 'mode_display', 
                   'cpu_usage', 'ram_usage', 'heartbeat_seq', 'off_minutes', 'received_at', 'machine_id']],
             column_config={
                 "username": st.column_config.TextColumn("👤 User"),
                 "hostname": "💻 Hostname",
                 "monitor_state": "Trạng thái",
-                "operational_state": st.column_config.BadgeColumn(
-                    "Mode", 
-                    mapping={"READY": "green", "LOCKED": "red"}
-                ),
+                "mode_display": st.column_config.TextColumn("Agent Mode", help="READY: Bình thường | LOCKED: Đang khóa máy"),
                 "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
                 "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
-                "heartbeat_seq": st.column_config.NumberColumn("Seq #", help="Số thứ tự nhịp tim (Forensic)"),
+                "heartbeat_seq": st.column_config.NumberColumn("Seq #"),
                 "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f m"),
                 "received_at": "Lần cuối thấy",
                 "machine_id": "🆔 ID"
@@ -422,7 +424,7 @@ with t_mon:
             hide_index=True
         )
 
-        # --- 6. QUICK CONTROL PANEL (Lệnh LOCK/UNLOCK) ---
+        # --- 7. QUICK CONTROL PANEL ---
         st.write("---")
         st.subheader("⚡ Điều khiển nhanh")
         ctrl_c1, ctrl_c2, ctrl_c3 = st.columns([2, 1, 1])
@@ -431,14 +433,14 @@ with t_mon:
         with ctrl_c2:
             if st.button("🔒 LOCK", type="primary", use_container_width=True):
                 sb.table("commands").insert({"machine_id": target_machine, "command": "LOCK", "is_executed": False}).execute()
-                st.toast("Đã gửi lệnh KHÓA")
+                st.toast(f"Đã gửi lệnh KHÓA tới {target_machine}")
         with ctrl_c3:
             if st.button("🔓 UNLOCK", use_container_width=True):
                 sb.table("commands").insert({"machine_id": target_machine, "command": "UNLOCK", "is_executed": False}).execute()
-                st.toast("Đã gửi lệnh MỞ KHÓA")
+                st.toast(f"Đã gửi lệnh MỞ KHÓA tới {target_machine}")
 
     else:
-        st.info("📡 Chưa có dữ liệu. Agent có thể đang ngoại tuyến.")
+        st.info("📡 Chưa có dữ liệu nhịp tim từ Agent.")
         if st.button("🔄 Reload"): st.rerun()
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
