@@ -593,6 +593,11 @@ if "deploy_mode" not in st.session_state:
     st.session_state["deploy_mode"] = "Rolling"
 
 with t_file:
+    from streamlit_autorefresh import st_autorefresh
+
+# Tự động refresh mỗi 5 giây để theo dõi tiến độ Agent
+    if d["status"] == "transferring":
+    st_autorefresh(interval=5000, key="deployment_monitor")
     st.markdown("## 📦 Deployment Center")
     st.caption("Quản lý vòng đời triển khai Artifact với cơ chế State-Tracking.")
 
