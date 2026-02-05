@@ -477,17 +477,16 @@ with t_ctrl:
 
     if not df_inv.empty:
         # --- 0. ĐỒNG BỘ TRẠNG THÁI (HYBRID LOGIC) ---
-        # Copy để tránh làm hỏng dữ liệu gốc df_inv
         df_display = df_inv.copy()
         
-        # Mapping trạng thái từ tab Monitoring (nếu có)
+        # Kết nối dữ liệu online/offline từ tab Monitoring
         if 'df_mon' in locals() and not df_mon.empty and 'monitor_state' in df_mon.columns:
             status_map = df_mon.set_index('machine_id')['monitor_state'].to_dict()
             df_display['monitor_state'] = df_display['machine_id'].map(status_map).fillna("⚫ Unknown")
         else:
             df_display['monitor_state'] = "❓ N/A"
 
-        # Bảo hiểm cột Dealer & Cột select
+        # Bảo hiểm các cột cần thiết
         if DEALER_COL_NAME not in df_display.columns:
             df_display[DEALER_COL_NAME] = "Chưa phân loại"
         
@@ -500,13 +499,15 @@ with t_ctrl:
         
         with c_sel1:
             with st.expander(f"🏢 Chọn nhanh theo {DEALER_COL_NAME.upper()}", expanded=False):
-                # Loại bỏ giá trị null để tránh lỗi Groupby
                 temp_df = df_display.dropna(subset=[DEALER_COL_NAME])
-                groups = temp_df.groupby(DEALER_COL_NAME)
-                c_dealer = st.columns(3)
-                for i, (dealer, g) in enumerate(groups):
-                    if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"q_sel_{dealer}"):
-                        selected_by_logic.extend(g['machine_id'].tolist())
+                if not temp_df.empty:
+                    groups = temp_df.groupby(DEALER_COL_NAME)
+                    c_dealer = st.columns(3)
+                    for i, (dealer, g) in enumerate(groups):
+                        if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"q_sel_{dealer}"):
+                            selected_by_logic.extend(g['machine_id'].tolist())
+                else:
+                    st.write("Không có dữ liệu phân nhóm.")
 
         with c_sel2:
             with st.expander("🚨 Lọc Rủi ro", expanded=False):
@@ -515,21 +516,20 @@ with t_ctrl:
                 if st.button("🚨 Chọn tất cả", use_container_width=True, key="btn_risk_sel"):
                     selected_by_logic.extend(risk_targets['machine_id'].tolist())
 
-        # --- 2. XỬ LÝ DỮ LIỆU TRƯỚC KHI ĐƯA VÀO EDITOR (QUAN TRỌNG) ---
+        # --- 2. XỬ LÝ DỮ LIỆU TRƯỚC KHI ĐƯA VÀO EDITOR ---
         if selected_by_logic:
-            # Loại bỏ trùng lặp ID nếu chọn cả Dealer và Risk
             unique_targets = list(set(selected_by_logic))
             df_display.loc[df_display['machine_id'].isin(unique_targets), 'select'] = True
 
-        # Xác định chính xác cột User/Username để tránh NameError
-        user_col = 'username' if 'username' in df_display.columns else ('User' if 'User' in df_display.columns else df_display.columns[1])
+        # Xác định cột User
+        user_col_final = 'username' if 'username' in df_display.columns else \
+                         ('User' if 'User' in df_display.columns else df_display.columns[1])
         
-        # Danh sách cột hiển thị (Đảm bảo DUY NHẤT - Unique)
-        # Loại bỏ các cột trùng tên bằng list(set()) là không được vì mất thứ tự, nên ta liệt kê tay:
-        final_cols = ['select', user_col, 'machine_id', 'monitor_state', 'status']
-        
-        # Lọc và Reset Index để st.data_editor không bị loạn index
-        df_for_edit = df_display[final_cols].copy().reset_index(drop=True)
+        # Làm sạch cột để tránh lỗi StreamlitAPIException
+        final_cols = ['select', user_col_final, 'machine_id', 'monitor_state', 'status']
+        df_for_edit = df_display[final_cols].copy()
+        df_for_edit.columns = [str(c).strip() for c in df_for_edit.columns]
+        df_for_edit = df_for_edit.reset_index(drop=True)
 
         # --- 3. DATA EDITOR ---
         st.write("---")
@@ -537,15 +537,15 @@ with t_ctrl:
             df_for_edit,
             column_config={
                 "select": st.column_config.CheckboxColumn("Chọn", help="Tích để gửi lệnh"),
-                user_col: "Người dùng",
+                user_col_final: "Người dùng",
                 "machine_id": "Mã Máy",
                 "monitor_state": "Kết nối",
                 "status": "Trạng thái khóa"
             },
-            disabled=[user_col, 'machine_id', 'monitor_state', 'status'],
+            disabled=[user_col_final, 'machine_id', 'monitor_state', 'status'],
             hide_index=True,
             use_container_width=True,
-            key="ctrl_editor_v4_final" # Key mới hoàn toàn để reset cache lỗi
+            key="ctrl_editor_perfect_v5"
         )
 
         # --- 4. ACTION BAR ---
@@ -578,7 +578,7 @@ with t_ctrl:
                         st.error(f"Lỗi: {e}")
             
             with act3:
-                st.info("💡 Lệnh sẽ được thực thi khi Agent gửi heartbeat tiếp theo.")
+                st.info("💡 Lệnh sẽ được thực hiện khi Agent gửi heartbeat kế tiếp.")
         else:
             st.info("👆 Tích chọn máy ở bảng trên để thực hiện lệnh.")
 
