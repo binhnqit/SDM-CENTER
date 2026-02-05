@@ -348,49 +348,29 @@ with t_tokens:
             st.success(f"Đã cấp Token cho {new_owner}")
 
 with t_mon:
+    # --- 0. CẤU HÌNH BIẾN ---
+    dealer_col = DEALER_COL_NAME
+
     st.header("🖥️ Device Monitoring Center")
     st.caption(f"Trạng thái thời gian thực từ hệ thống Agent {AGENT_VERSION}")
     
-    # --- 1. LOAD DỮ LIỆU QUA RPC (CHỈ DÙNG CHO MONITORING) ---
+    # --- 1. LOAD DỮ LIỆU QUA RPC ---
     try:
         res = sb.rpc("latest_agent_heartbeats").execute()
-        df_mon = pd.DataFrame(res.data) # Đổi df_hb -> df_mon
+        df_mon = pd.DataFrame(res.data) # Đã đổi tên thành df_mon theo chuẩn
         
-        if df_mon.empty:
-            st.info("📡 Đang chờ tín hiệu từ Agent...")
-        else:
-            # Xử lý nội bộ trong tab Monitoring
+        if not df_mon.empty:
+            # Dòng này phải thẳng hàng với lệnh trên
             if DEALER_COL_NAME not in df_mon.columns:
-                df_mon[DEALER_COL_NAME] = "N/A"
-    except Exception as e:
-        st.error(f"❌ Lỗi kết nối Monitoring: {e}")
-        df_mon = pd.DataFrame()
-
-    if not df_mon.empty:
-        # --- 2. XỬ LÝ THỜI GIAN (Dùng df_mon) ---
-        now_dt = datetime.now(timezone.utc)
-        df_mon['received_at_dt'] = pd.to_datetime(df_mon['received_at'], utc=True)
-        # ... (Tất cả logic hiển thị bên dưới sếp đổi df_hb thành df_mon hết nhé)
-            if DEALER_COL_NAME not in df_d.columns:
-                df_d[DEALER_COL_NAME] = "Chưa phân loại"
+                df_mon[DEALER_COL_NAME] = "Chưa phân loại"
         else:
-            df_d = pd.DataFrame(columns=[DEALER_COL_NAME])
+            df_mon = pd.DataFrame(columns=[DEALER_COL_NAME])
             
     except Exception as e:
         st.error(f"❌ Lỗi kết nối dữ liệu: {e}")
-        df_hb = pd.DataFrame()
-        df_d = pd.DataFrame(columns=[dealer_col])
+        df_mon = pd.DataFrame(columns=[DEALER_COL_NAME])
 
-    if not df_hb.empty:
-        # --- 2. XỬ LÝ THỜI GIAN CHUẨN UTC (Fix lệch 7 tiếng) ---
-        now_dt = datetime.now(timezone.utc)
-        df_hb['received_at_dt'] = pd.to_datetime(df_hb['received_at'], utc=True)
-        
-        # Tính phút vắng mặt
-        df_hb['off_minutes'] = (now_dt - df_hb['received_at_dt']).dt.total_seconds() / 60
-        df_hb['off_minutes'] = df_hb['off_minutes'].apply(lambda x: max(0, round(x, 1)))
-
-        # --- 3. LOGIC TRẠNG THÁI & HIỂN THỊ ---
+          # --- 3. LOGIC TRẠNG THÁI & HIỂN THỊ ---
         def resolve_state(mins):
             if mins <= 3: return "🟢 Online"
             if mins <= 10: return "🟡 Unstable"
