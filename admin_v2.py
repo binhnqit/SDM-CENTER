@@ -489,16 +489,23 @@ with t_ctrl:
         col_select1, col_select2 = st.columns([2, 1])
         # ... tiếp tục các logic phía dưới ...   
         selected_by_dealer = []
+        col_select1, col_select2 = st.columns([2, 1])
+        
+        selected_by_dealer = []
         with col_select1:
-            with st.expander("🏢 Chọn nhanh theo Đại lý (Dealer Group)"):
-                # Giả định sếp có cột 'dealer', nếu chưa có ta lấy tạm User hoặc 'NPH'
-                dealer_col = 'dealer' if 'dealer' in df_d.columns else 'User'
-                groups = df_d.groupby(dealer_col)
-                
-                c_dealer = st.columns(3)
-                for i, (dealer, g) in enumerate(groups):
-                    if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"chk_{dealer}"):
-                        selected_by_dealer.extend(g['machine_id'].tolist())
+            # Dùng hằng số DEALER_COL_NAME để hiển thị tiêu đề
+            with st.expander(f"🏢 Chọn nhanh theo {DEALER_COL_NAME.upper()}", expanded=True):
+                # FIX LỖI: Kiểm tra trực tiếp trên df_inv và dùng DEALER_COL_NAME
+                if DEALER_COL_NAME in df_inv.columns:
+                    groups = df_inv.groupby(DEALER_COL_NAME)
+                    
+                    c_dealer = st.columns(3)
+                    for i, (dealer, g) in enumerate(groups):
+                        # Dùng key duy nhất để tránh lỗi Duplicate Widget ID
+                        if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"ctrl_grp_{dealer}"):
+                            selected_by_dealer.extend(g['machine_id'].tolist())
+                else:
+                    st.warning(f"Không tìm thấy cột {DEALER_COL_NAME} để phân nhóm.")
 
         with col_select2:
             with st.expander("🚨 Lọc Rủi ro"):
