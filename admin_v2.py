@@ -621,22 +621,27 @@ with t_file:
     if not df_inv.empty:
         st.subheader("📁 Chuyển tập tin tới thiết bị")
         
-        # Tạo danh sách lựa chọn máy từ df_inv
-        # (Đảm bảo dùng đúng tên cột username/hostname của sếp)
-        device_options = df_inv.apply(
-            lambda x: f"{x['username']} | {x['hostname']} ({x['machine_id']})", axis=1
-        ).tolist()
+        # --- TỰ ĐỘNG NHẬN DIỆN CỘT (Để tránh KeyError) ---
+        # Tìm cột tên giống 'user', nếu không thấy thì lấy cột thứ 2 của bảng
+        u_col = next((c for c in df_inv.columns if 'user' in c.lower()), df_inv.columns[1])
+        # Tìm cột tên giống 'host', nếu không thấy thì dùng luôn machine_id
+        h_col = next((c for c in df_inv.columns if 'host' in c.lower()), 'machine_id')
         
+        # Tạo danh sách hiển thị an toàn
+        try:
+            device_options = df_inv.apply(
+                lambda x: f"{x[u_col]} | {x[h_col]} ({x['machine_id']})", axis=1
+            ).tolist()
+        except Exception:
+            # Phương án dự phòng cuối cùng nếu vẫn lỗi
+            device_options = [f"ID: {mid}" for mid in df_inv['machine_id']]
+
         selected_devices = st.multiselect(
             "Chọn thiết bị nhận file:", 
             options=df_inv['machine_id'].tolist(),
-            format_func=lambda x: next((opt for opt in device_options if x in opt), x)
+            format_func=lambda x: next((opt for opt in device_options if x in opt), x),
+            key="file_transfer_sel"
         )
-        
-        # ... các logic upload file phía dưới ...
-    else:
-        st.warning("⚠️ Không có dữ liệu thiết bị để thực hiện truyền file.")
-
     # ---------------------------------------------------------
     # 3️⃣ BƯỚC 3: KHỞI TẠO CHIẾN DỊCH (Sử dụng State)
     # ---------------------------------------------------------
