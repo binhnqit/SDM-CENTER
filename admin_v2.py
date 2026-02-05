@@ -8,6 +8,8 @@ import plotly.express as px
 import math
 import hashlib, uuid, time, math
 import numpy as np
+# Khai báo phiên bản hệ thống
+AGENT_VERSION = "V15.2-ENTERPRISE"
 def sanitize_df(df: pd.DataFrame):
     return (
         df.replace([float("inf"), float("-inf")], None)
