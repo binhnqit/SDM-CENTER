@@ -697,65 +697,103 @@ with t_file:
     # ---------------------------------------------------------
     # ---------------------------------------------------------
    # ---------------------------------------------------------
+    # ---------------------------------------------------------
     # 4️⃣ BƯỚC 4: ĐIỀU PHỐI & GIÁM SÁT
     # ---------------------------------------------------------
     st.write("---")
     st.markdown("### 🚀 Bước 4: Điều phối triển khai")
     
-    recent_deployments = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(5).execute()
+    # Truy vấn lấy các Campaign (Giới hạn hiển thị Active trước)
+    recent_deployments = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(20).execute()
     
     if recent_deployments.data:
+        # Tách danh sách thành 2 nhóm: Đang chạy và Đã xong hoàn toàn
+        active_campaigns = []
+        completed_targets_data = []
+
         for d in recent_deployments.data:
-            # FIX LOGIC: Check trạng thái con (Targets) để quyết định Refresh UI
-            targets_res = sb.table("deployment_targets").select("*").eq("deployment_id", d["id"]).execute()
-            df_targets = pd.DataFrame(targets_res.data) if targets_res.data else pd.DataFrame()
+            t_res = sb.table("deployment_targets").select("*").eq("deployment_id", d["id"]).execute()
+            if not t_res.data: continue
             
-            # Nếu có bất kỳ máy nào đang pending hoặc transferring -> Bật Auto-refresh
-            is_active = not df_targets.empty and df_targets['status'].isin(['pending', 'transferring']).any()
+            df_t = pd.DataFrame(t_res.data)
+            # Kiểm tra xem campaign này còn máy nào chưa xong không
+            is_still_running = df_t['status'].isin(['staged', 'pending', 'transferring']).any()
             
-            if is_active:
+            if is_still_running:
+                active_campaigns.append({"info": d, "targets": df_t})
+            
+            # Gom tất cả các máy đã completed vào danh sách lịch sử (dù thuộc campaign nào)
+            success_df = df_t[df_t['status'] == 'completed'].copy()
+            if not success_df.empty:
+                success_df['file_name'] = d['artifacts']['file_name']
+                success_df['version'] = d['artifacts']['version']
+                completed_targets_data.append(success_df)
+
+        # --- HIỂN THỊ CÁC CHIẾN DỊCH ĐANG HOẠT ĐỘNG ---
+        st.subheader("🔥 Chiến dịch đang thực thi")
+        if not active_campaigns:
+            st.info("Hiện không có chiến dịch nào đang chạy.")
+        else:
+            for active in active_campaigns:
+                d = active["info"]
+                df_targets = active["targets"]
+                
+                # Auto-refresh cho các campaign đang chạy
                 try:
                     from streamlit_autorefresh import st_autorefresh
-                    st_autorefresh(interval=8000, key=f"refresh_{d['id']}")
+                    st_autorefresh(interval=8000, key=f"active_refresh_{d['id']}")
                 except: pass
 
-            with st.container(border=True):
-                c1, c2 = st.columns([3, 1])
-                with c1:
-                    st.subheader(f"Campaign #{d['id']} | {d['artifacts']['file_name']}")
-                    st.caption(f"Phiên bản: {d['artifacts']['version']} | Chế độ: {d['mode']}")
+                with st.container(border=True):
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        st.markdown(f"**Campaign #{d['id']}** | 📦 `{d['artifacts']['file_name']}`")
+                        st.caption(f"Phiên bản: {d['artifacts']['version']} | Chế độ: {d['mode']}")
+                    
+                    if d["status"] == "ready":
+                        if c2.button("▶ START", key=f"start_{d['id']}", type="primary", use_container_width=True):
+                            sb.table("deployments").update({"status": "transferring"}).eq("id", d["id"]).execute()
+                            sb.table("deployment_targets").update({"status": "pending"}).eq("deployment_id", d["id"]).execute()
+                            st.rerun()
+                    else:
+                        c2.write(f"⏳ **{d['status'].upper()}**")
 
-                # Nút START: Chỉ hiện nếu Deployment đang 'ready'
-                if d["status"] == "ready":
-                    if c2.button("▶ START", key=f"start_{d['id']}", type="primary", use_container_width=True):
-                        # Cập nhật cha
-                        sb.table("deployments").update({"status": "transferring"}).eq("id", d["id"]).execute()
-                        # Cập nhật tất cả con sang PENDING để Agent bắt đầu nhặt
-                        sb.table("deployment_targets").update({"status": "pending"}).eq("deployment_id", d["id"]).execute()
-                        st.rerun()
-
-                # Hiển thị Progress & Detail Table
-                if not df_targets.empty:
+                    # Thanh tiến độ tổng quát của Campaign
                     avg_p = int(df_targets["progress"].mean())
                     st.progress(avg_p / 100)
                     
-                    with st.expander(f"📊 Trạng thái thiết bị ({len(df_targets)} máy)"):
-                        # Áp dụng màu sắc cho status để dễ quan sát
-                        def color_status(val):
-                            color = '#28a745' if val == 'completed' else '#fd7e14' if val == 'transferring' else '#dc3545' if val == 'failed' else '#6c757d'
-                            return f'background-color: {color}; color: white; padding: 2px; border-radius: 4px'
-
+                    with st.expander("🔍 Chi tiết tiến độ từng máy"):
                         st.dataframe(
                             df_targets[['machine_id', 'status', 'progress', 'updated_at']],
                             column_config={
                                 "progress": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100, format="%d%%"),
-                                "updated_at": st.column_config.DatetimeColumn("Lần cuối Agent báo tin", format="HH:mm:ss"),
+                                "updated_at": st.column_config.DatetimeColumn("Cập nhật cuối", format="HH:mm:ss"),
                                 "status": "Trạng thái"
                             },
                             use_container_width=True, hide_index=True
                         )
-    else:
-        st.info("Chưa có chiến dịch triển khai nào.")
+
+        # --- BẢNG LIỆT KÊ LỊCH SỬ THÀNH CÔNG ---
+        st.write("---")
+        st.subheader("✅ Lịch sử cập nhật thành công")
+        
+        if completed_targets_data:
+            df_history = pd.concat(completed_targets_data)
+            # Sắp xếp theo thời gian mới nhất
+            df_history = df_history.sort_values(by="updated_at", ascending=False)
+            
+            st.dataframe(
+                df_history[['machine_id', 'file_name', 'version', 'updated_at']],
+                column_config={
+                    "machine_id": "Mã thiết bị",
+                    "file_name": "Tên File",
+                    "version": "Phiên bản",
+                    "updated_at": st.column_config.DatetimeColumn("Ngày cập nhật", format="DD/MM/YYYY HH:mm")
+                },
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.caption("Chưa có dữ liệu cập nhật thành công.")
 with t_sum:
     # 🔵 LEVEL 1: EXECUTIVE SNAPSHOT (10s Insight)
     st.markdown("# 🧠 System Intelligence Dashboard")
