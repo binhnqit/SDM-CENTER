@@ -107,17 +107,21 @@ with c_head2:
         st.rerun()
 
 # --- METRICS ---
-if not df_d.empty:
-    df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'])
-    now_dt = datetime.now(df_d['last_seen_dt'].dt.tz)
-    df_d['is_online'] = (now_dt - df_d['last_seen_dt']) < timedelta(minutes=2)
-    online_now = len(df_d[df_d['is_online']])
+# --- METRICS ---
+if not df_inv.empty: # Sửa từ df_d thành df_inv
+    df_inv['last_seen_dt'] = pd.to_datetime(df_inv['last_seen'])
+    # Lấy timezone từ dữ liệu hoặc dùng UTC làm chuẩn
+    now_dt = datetime.now(timezone.utc) 
+    
+    # Tính toán Online dựa trên df_inv
+    df_inv['is_online'] = (now_dt - df_inv['last_seen_dt'].dt.tz_convert(timezone.utc)) < timedelta(minutes=2)
+    online_now = len(df_inv[df_inv['is_online']])
     
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Tổng thiết bị", len(df_d))
-    m2.metric("🟢 Trực tuyến", online_now, delta=f"{online_now/len(df_d)*100:.1f}%")
-    m3.metric("Tải CPU TB", f"{df_d['cpu_usage'].mean():.1f}%")
-    m4.metric("Dung lượng RAM", f"{df_d['ram_usage'].mean():.1f}%")
+    m1.metric("Tổng thiết bị", len(df_inv))
+    m2.metric("🟢 Trực tuyến", online_now)
+    m3.metric("Tải CPU TB", f"{df_inv['cpu_usage'].mean():.1f}%")
+    m4.metric("Dung lượng RAM", f"{df_inv['ram_usage'].mean():.1f}%")
 # --- NAVIGATION TABS ---
 # --- TRONG PHẦN KHAI BÁO TABS ---
 t_mon, t_ctrl, t_file, t_csv, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs([
