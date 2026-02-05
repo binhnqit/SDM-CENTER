@@ -72,29 +72,30 @@ def auto_clean():
         pass
 
 # --- DATA ENGINE ---
+# --- DATA ENGINE ---
 def load_all_data():
-    # --- DATA ENGINE ---
-df_inv, df_c, df_f = load_all_data() # df_inv là dữ liệu tĩnh từ bảng devices
-
-# Ép schema phòng thủ cho df_inv (Dữ liệu gốc cho các tab điều khiển)
-if not df_inv.empty:
-    if DEALER_COL_NAME not in df_inv.columns:
-        df_inv[DEALER_COL_NAME] = "Chưa phân loại"
-else:
-    df_inv = pd.DataFrame(columns=[DEALER_COL_NAME, "machine_id", "status"])
-
-# Khởi tạo df_mon rỗng để Tab Monitoring tự lấp đầy
-df_mon = pd.DataFrame()
     try:
         dev = sb.table("devices").select("*").execute()
         cmd = sb.table("commands").select("*").order("created_at", desc=True).limit(20).execute()
         # Lấy file_queue để thống kê
         files = sb.table("file_queue").select("*").order("timestamp", desc=True).execute()
         return pd.DataFrame(dev.data), pd.DataFrame(cmd.data), pd.DataFrame(files.data)
-    except: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    except Exception as e: 
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-df_d, df_c, df_f = load_all_data()
+# Dòng này PHẢI nằm ngoài hàm (sát lề trái)
+df_inv, df_c, df_f = load_all_data() 
 
+# --- THIẾT LẬP SCHEMA PHÒNG THỦ NGAY SAU KHI LOAD ---
+if not df_inv.empty:
+    if DEALER_COL_NAME not in df_inv.columns:
+        df_inv[DEALER_COL_NAME] = "Chưa phân loại"
+else:
+    # Tạo sẵn khung để các tab sau (dòng 481) không bị KeyError
+    df_inv = pd.DataFrame(columns=[DEALER_COL_NAME, "machine_id", "status"])
+
+# Khởi tạo biến cho Monitoring
+df_mon = pd.DataFrame()
 # --- HEADER ---
 c_head1, c_head2 = st.columns([3, 1])
 with c_head1:
