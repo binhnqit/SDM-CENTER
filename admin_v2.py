@@ -734,10 +734,13 @@ with t_offline:
     st.header("🕵️ AI Forensics – Khám nghiệm sự cố")
     st.caption("Dựa trên Event Semantic để truy vết nguyên nhân gây gián đoạn hạ tầng.")
 
-    # 1. Control Plane - Điều tra theo Device ID & Timeline
+    # Khởi tạo biến df_evt mặc định để tránh lỗi NameError
+    df_evt = pd.DataFrame()
+
+    # 1. Control Plane
     col_ctrl1, col_ctrl2 = st.columns([1, 1])
     with col_ctrl1:
-        target_device = st.text_input("🔍 Nhập Device ID cần khám nghiệm", placeholder="Ví dụ: DESKTOP-MFGVLKI")
+        target_device = st.text_input("🔍 Nhập Device ID cần khám nghiệm", placeholder="Ví dụ: DESKTOP-MFGVLKI", key="forensic_search")
     with col_ctrl2:
         days = st.slider("Phạm vi hồi tố (ngày)", 1, 30, 7)
 
@@ -745,74 +748,78 @@ with t_offline:
         st.info("💡 Vui lòng nhập Device ID để bắt đầu quy trình Replay sự kiện.")
     else:
         try:
-            # 2. Query theo Event Core Schema của sếp
-            # Chúng ta không chỉ lấy 'OFFLINE', lấy toàn bộ để dựng Timeline
+            # 2. Query từ bảng device_events (Đã đổi theo hint của Supabase)
             res = (
-                sb.table("agent_events")
+                sb.table("device_events")
                   .select("*")
                   .eq("device_id", target_device)
                   .gte("timestamp", (datetime.now(timezone.utc) - timedelta(days=days)).isoformat())
                   .order("timestamp", desc=True)
                   .execute()
             )
+            
+            # Gán dữ liệu vào biến
             df_evt = pd.DataFrame(res.data)
 
             if df_evt.empty:
                 st.success(f"✅ Không phát hiện dấu hiệu bất thường cho thiết bị {target_device}")
             else:
-                # 3. ROOT CAUSE INFERENCE (Mô phỏng AI suy luận từ Schema)
+                # 3. ROOT CAUSE INFERENCE
                 st.markdown("### 🧠 AI Root Cause Inference")
                 
-                # Logic suy luận đơn giản dựa trên sự xuất hiện của Event Critical
-                has_tamper = not df_evt[df_evt['event_type'] == 'BINARY_MODIFIED'].empty
-                has_kill = not df_evt[df_evt['event_type'] == 'AGENT_KILLED'].empty
+                # Logic phân tích nhanh các Event đặc biệt trong Schema
+                critical_events = df_evt[df_evt['event_type'].isin(['BINARY_MODIFIED', 'AGENT_KILLED', 'AGENT_TAMPERED'])]
                 
                 with st.container(border=True):
                     c1, c2 = st.columns([1, 4])
-                    if has_tamper or has_kill:
+                    if not critical_events.empty:
                         c1.error("CRITICAL")
                         c2.subheader("🚨 Cảnh báo can thiệp chủ động")
-                        c2.write("AI phát hiện dấu hiệu chỉnh sửa file thực thi trước khi Agent bị tắt. Đây không phải lỗi mạng.")
+                        c2.write(f"Phát hiện {len(critical_events)} sự kiện xâm phạm bảo mật. Agent bị dừng do tác động bên ngoài.")
                     else:
                         c1.warning("HIGH")
                         c2.subheader("📡 Sự cố hạ tầng mạng")
-                        c2.write("Chuỗi sự kiện cho thấy Network rớt trước khi Heartbeat mất. Có thể do Router hoặc cáp.")
+                        c2.write("Chuỗi sự kiện cho thấy Network rớt trước khi Heartbeat mất. Khả năng cao do Router/ISP.")
 
-                # 4. SEMANTIC TIMELINE (Timeline có ngữ nghĩa)
+                # 4. SEMANTIC TIMELINE
                 st.markdown("### 🕒 Forensic Timeline Replay")
-                
                 for _, row in df_evt.iterrows():
-                    # Phân loại màu sắc theo Severity
                     sev = row.get('severity', 'INFO')
-                    color = "🔴" if sev == "CRITICAL" else ("🟠" if sev == "HIGH" else "🔵")
+                    icon = "🔴" if sev == "CRITICAL" else ("🟠" if sev == "HIGH" else "🔵")
                     
-                    with st.expander(f"{color} {row['timestamp']} — {row['event_type']}"):
+                    with st.expander(f"{icon} {row['timestamp']} — {row['event_type']}"):
                         col_left, col_right = st.columns([3, 1])
                         with col_left:
-                            st.write(f"**Category:** `{row.get('event_category')}`")
+                            st.write(f"**Phân nhóm:** `{row.get('event_category', 'Uncategorized')}`")
                             st.json(row.get('details', {}))
                         with col_right:
-                            st.metric("Confidence", f"{row.get('confidence', 0)*100:.0f}%")
+                            # Hiển thị Confidence nếu có, không thì để N/A
+                            conf = row.get('confidence')
+                            st.metric("Confidence", f"{conf*100:.0f}%" if conf else "N/A")
                             if row.get('offline'):
                                 st.warning("Recorded Offline")
 
-                # 5. BIỂU ĐỒ PHÂN BỔ LOẠI SỰ KIỆN (Để nhìn nhanh bức tranh tổng thể)
+                # 5. VISUALIZATION
                 st.write("---")
                 event_dist = df_evt['event_type'].value_counts().reset_index()
-                fig = px.pie(event_dist, names='event_type', values='count', 
-                             title="Tỷ lệ các loại sự kiện phát hiện được",
+                event_dist.columns = ['Type', 'Count']
+                fig = px.pie(event_dist, names='Type', values='Count', 
+                             title="Tỷ lệ các loại sự kiện phát hiện",
+                             hole=0.4,
                              color_discrete_sequence=px.colors.sequential.Reds_r)
                 st.plotly_chart(fig, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Lỗi Forensics: {e}")
+            st.error(f"❌ Lỗi truy vấn Forensics: {e}")
+            st.info("💡 Mẹo: Kiểm tra xem bảng 'device_events' đã có các cột: event_type, timestamp, severity, device_id chưa?")
 
-# --- [BỔ SUNG] NÚT EXPORT BÁO CÁO PHÁP Y ---
+# --- [SAFE EXPORT] ---
 if target_device and not df_evt.empty:
+    st.write("---")
     st.download_button(
         label="📥 Xuất báo cáo pháp y (JSON)",
         data=df_evt.to_json(orient='records'),
-        file_name=f"Forensic_{target_device}_{datetime.now().strftime('%Y%m%d')}.json",
+        file_name=f"Forensic_{target_device}.json",
         mime="application/json"
     )
 
