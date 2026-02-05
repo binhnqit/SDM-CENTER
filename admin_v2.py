@@ -10,6 +10,7 @@ import hashlib, uuid, time, math
 import numpy as np
 # Khai báo phiên bản hệ thống
 AGENT_VERSION = "V15.2-ENTERPRISE"
+DEALER_COL_NAME = "location"  # Dùng biến viết hoa để làm hằng số toàn cục
 def sanitize_df(df: pd.DataFrame):
     return (
         df.replace([float("inf"), float("-inf")], None)
@@ -335,7 +336,7 @@ with t_tokens:
 
 with t_mon:
     # --- 0. CẤU HÌNH BIẾN TOÀN CỤC (Dùng cho cả Tab Deployment/Dealer) ---
-    dealer_col = "location" 
+    dealer_col = DEALER_COL_NAME
 
     st.header("🖥️ Device Monitoring Center")
     st.caption(f"Trạng thái thời gian thực từ hệ thống Agent {AGENT_VERSION}")
@@ -346,19 +347,12 @@ with t_mon:
         df_hb = pd.DataFrame(res.data)
         
         if not df_hb.empty:
-            # Đồng bộ hóa df_d để các Tab khác không bị KeyError khi Groupby
             df_d = df_hb.copy()
-            
-            # Khắc phục triệt để lỗi KeyError: 
-            # Đảm bảo cột dealer_col tồn tại ngay cả khi SQL Join gặp vấn đề
-            if dealer_col not in df_d.columns:
-                if 'location' in df_d.columns:
-                    df_d[dealer_col] = df_d['location']
-                else:
-                    df_d[dealer_col] = "Chưa phân loại"
+            # Bảo hiểm: Nếu RPC quên join, ta tự tạo cột để tab dưới không crash
+            if DEALER_COL_NAME not in df_d.columns:
+                df_d[DEALER_COL_NAME] = "Chưa phân loại"
         else:
-            # Tạo DataFrame rỗng có sẵn cột để tránh crash các tab sau
-            df_d = pd.DataFrame(columns=[dealer_col, 'machine_id', 'hostname'])
+            df_d = pd.DataFrame(columns=[DEALER_COL_NAME])
             
     except Exception as e:
         st.error(f"❌ Lỗi kết nối dữ liệu: {e}")
