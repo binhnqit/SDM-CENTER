@@ -73,6 +73,18 @@ def auto_clean():
 
 # --- DATA ENGINE ---
 def load_all_data():
+    # --- DATA ENGINE ---
+df_inv, df_c, df_f = load_all_data() # df_inv là dữ liệu tĩnh từ bảng devices
+
+# Ép schema phòng thủ cho df_inv (Dữ liệu gốc cho các tab điều khiển)
+if not df_inv.empty:
+    if DEALER_COL_NAME not in df_inv.columns:
+        df_inv[DEALER_COL_NAME] = "Chưa phân loại"
+else:
+    df_inv = pd.DataFrame(columns=[DEALER_COL_NAME, "machine_id", "status"])
+
+# Khởi tạo df_mon rỗng để Tab Monitoring tự lấp đầy
+df_mon = pd.DataFrame()
     try:
         dev = sb.table("devices").select("*").execute()
         cmd = sb.table("commands").select("*").order("created_at", desc=True).limit(20).execute()
@@ -335,20 +347,29 @@ with t_tokens:
             st.success(f"Đã cấp Token cho {new_owner}")
 
 with t_mon:
-    # --- 0. CẤU HÌNH BIẾN TOÀN CỤC (Dùng cho cả Tab Deployment/Dealer) ---
-    dealer_col = DEALER_COL_NAME
-
     st.header("🖥️ Device Monitoring Center")
     st.caption(f"Trạng thái thời gian thực từ hệ thống Agent {AGENT_VERSION}")
     
-    # --- 1. LOAD DỮ LIỆU QUA RPC (Hỗ trợ JOIN Metadata) ---
+    # --- 1. LOAD DỮ LIỆU QUA RPC (CHỈ DÙNG CHO MONITORING) ---
     try:
         res = sb.rpc("latest_agent_heartbeats").execute()
-        df_hb = pd.DataFrame(res.data)
+        df_mon = pd.DataFrame(res.data) # Đổi df_hb -> df_mon
         
-        if not df_hb.empty:
-            df_d = df_hb.copy()
-            # Bảo hiểm: Nếu RPC quên join, ta tự tạo cột để tab dưới không crash
+        if df_mon.empty:
+            st.info("📡 Đang chờ tín hiệu từ Agent...")
+        else:
+            # Xử lý nội bộ trong tab Monitoring
+            if DEALER_COL_NAME not in df_mon.columns:
+                df_mon[DEALER_COL_NAME] = "N/A"
+    except Exception as e:
+        st.error(f"❌ Lỗi kết nối Monitoring: {e}")
+        df_mon = pd.DataFrame()
+
+    if not df_mon.empty:
+        # --- 2. XỬ LÝ THỜI GIAN (Dùng df_mon) ---
+        now_dt = datetime.now(timezone.utc)
+        df_mon['received_at_dt'] = pd.to_datetime(df_mon['received_at'], utc=True)
+        # ... (Tất cả logic hiển thị bên dưới sếp đổi df_hb thành df_mon hết nhé)
             if DEALER_COL_NAME not in df_d.columns:
                 df_d[DEALER_COL_NAME] = "Chưa phân loại"
         else:
