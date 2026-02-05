@@ -338,14 +338,32 @@ with t_mon:
     st.caption(f"Trạng thái thời gian thực từ hệ thống Agent {AGENT_VERSION}")
     
     # --- 1. LOAD DỮ LIỆU QUA RPC ---
+    # --- 1. LOAD DỮ LIỆU QUA RPC ---
     try:
         res = sb.rpc("latest_agent_heartbeats").execute()
         df_hb = pd.DataFrame(res.data)
-        # Đồng bộ hóa df_d để các Tab khác dùng chung
-        df_d = df_hb.copy() 
+        
+        if not df_hb.empty:
+            # Tạo bản sao df_d cho các Tab khác
+            df_d = df_hb.copy()
+            
+            # 🔥 FIX LỖI KEYERROR: Thêm cột dealer_col nếu nó chưa tồn tại
+            # Giả sử dealer_col của sếp đang đặt là 'dealer_name' hoặc 'branch'
+            if 'dealer_col' in globals() or 'dealer_col' in locals():
+                actual_col_name = dealer_col
+            else:
+                actual_col_name = "Chi nhánh" # Tên mặc định để tránh crash
+                dealer_col = "Chi nhánh"
+                
+            if actual_col_name not in df_d.columns:
+                df_d[actual_col_name] = "Chưa phân loại" 
+        else:
+            df_d = pd.DataFrame()
+            
     except Exception as e:
         st.error(f"❌ Lỗi kết nối RPC: {e}")
         df_hb = pd.DataFrame()
+        df_d = pd.DataFrame()
 
     if not df_hb.empty:
         # --- 2. XỬ LÝ THỜI GIAN CHUẨN UTC ---
