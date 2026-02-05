@@ -616,10 +616,8 @@ with t_file:
     st.write("---")
     st.markdown("### 🎯 Bước 2: Chọn máy triển khai")
     
-    selected_devices = [] # Khởi tạo danh sách hứng dữ liệu
-    
+    selected_devices = []
     if not df_inv.empty:
-        # Tự động nhận diện cột để tránh KeyError
         u_col = next((c for c in df_inv.columns if 'user' in c.lower()), df_inv.columns[1])
         h_col = next((c for c in df_inv.columns if 'host' in c.lower()), 'machine_id')
         
@@ -630,116 +628,128 @@ with t_file:
         except Exception:
             device_options = [f"ID: {mid}" for mid in df_inv['machine_id']]
 
-        # Widget chọn máy
         selected_devices = st.multiselect(
             "Chọn thiết bị nhận file:", 
             options=df_inv['machine_id'].tolist(),
             format_func=lambda x: next((opt for opt in device_options if x in opt), x),
-            key="file_transfer_sel_final"
+            key="deploy_select_machines"
         )
     else:
-        st.warning("⚠️ Không có máy nào để triển khai.")
+        st.warning("⚠️ Không có máy nào trong danh sách thiết bị.")
 
     # ---------------------------------------------------------
-    # 3️⃣ BƯỚC 3: KHỞI TẠO CHIẾN DỊCH
+    # 3️⃣ BƯỚC 3: KHỞI TẠO CHIẾN DỊCH (STAGING)
     # ---------------------------------------------------------
     st.write("---")
-    st.markdown("### 📝 Bước 3: Khởi tạo chiến dịch (Staging)")
+    st.markdown("### 📝 Bước 3: Khởi tạo chiến dịch")
     
-    # Kiểm tra điều kiện từ widget trực tiếp
     if not file:
-        st.warning("👉 Hãy chọn file ở Bước 1.")
+        st.warning("👉 Bước 1: Vui lòng tải lên tập tin.")
     elif not selected_devices:
-        st.warning("👉 Hãy chọn ít nhất một máy ở Bước 2.")
+        st.warning("👉 Bước 2: Vui lòng chọn ít nhất một máy mục tiêu.")
     else:
         st.success(f"🚀 Sẵn sàng truyền **{file.name}** tới **{len(selected_devices)}** máy.")
         
-        if st.button("🏗️ XÁC NHẬN & TẠO CHIẾN DỊCH (READY)", type="primary", use_container_width=True):
-            with st.status("⚙️ Đang thực hiện quy trình đóng gói...") as status:
+        if st.button("🏗️ XÁC NHẬN & TẠO CHIẾN DỊCH", type="primary", use_container_width=True):
+            with st.status("⚙️ Đang đóng gói và lưu trữ Artifact...") as status:
                 try:
-                    # 1. Xử lý Binary & Checksum
+                    # 1. Binary Processing
                     file_bytes = file.getvalue()
                     file_hash = hashlib.sha256(file_bytes).hexdigest()
-                    # Nén và mã hóa base64 để lưu vào DB (nếu sếp không dùng Storage riêng)
                     b64_data = base64.b64encode(zlib.compress(file_bytes)).decode('utf-8')
                     
-                    # 2. Insert Artifact
-                    art_res = sb.table("artifacts").insert({
-                        "file_name": file.name, 
-                        "file_type": file_type, 
-                        "version": version,
-                        "checksum": file_hash,
-                        "size": round(len(file_bytes)/1024, 2), 
-                        "data_chunk": b64_data
-                    }).execute()
+                    # 2. Insert Artifact (Bỏ data_chunk nếu sếp chưa thêm cột, hoặc giữ nếu đã có)
+                    art_data = {
+                        "file_name": file.name, "file_type": file_type, "version": version,
+                        "checksum": file_hash, "size": round(len(file_bytes)/1024, 2)
+                    }
+                    # Kiểm tra và thêm data_chunk nếu sếp đã chạy lệnh SQL ALTER TABLE
+                    art_data["data_chunk"] = b64_data 
+
+                    art_res = sb.table("artifacts").insert(art_data).execute()
                     
                     if art_res.data:
                         art_id = art_res.data[0]["id"]
                         
-                        # 3. Tạo Deployment Cha
+                        # 3. Tạo Deployment Record
                         dep_res = sb.table("deployments").insert({
-                            "artifact_id": art_id, 
-                            "mode": deploy_mode, 
-                            "status": "ready"
+                            "artifact_id": art_id, "mode": deploy_mode, "status": "ready"
                         }).execute()
                         
                         if dep_res.data:
                             dep_id = dep_res.data[0]["id"]
                             
-                            # 4. Tạo Target Records cho từng máy đã chọn
-                            t_data = [
-                                {
-                                    "deployment_id": dep_id, 
-                                    "machine_id": m, 
-                                    "status": "staged", 
-                                    "progress": 0
-                                } for m in selected_devices
+                            # 4. Tạo Target Records
+                            t_records = [
+                                {"deployment_id": dep_id, "machine_id": m, "status": "staged", "progress": 0} 
+                                for m in selected_devices
                             ]
-                            sb.table("deployment_targets").insert(t_data).execute()
+                            sb.table("deployment_targets").insert(t_records).execute()
                             
-                            status.update(label="✅ Chiến dịch đã sẵn sàng!", state="complete")
+                            status.update(label="✅ Chiến dịch đã sẵn sàng trên Staging!", state="complete")
                             st.balloons()
-                            time.sleep(1.5)
+                            time.sleep(1)
                             st.rerun()
                 except Exception as e:
-                    st.error(f"Lỗi khởi tạo: {e}")
+                    st.error(f"❌ Lỗi: {e}")
 
     # ---------------------------------------------------------
-    # 4️⃣ BƯỚC 4: ĐIỀU PHỐI (MONITORING)
+    # 4️⃣ BƯỚC 4: ĐIỀU PHỐI & GIÁM SÁT
     # ---------------------------------------------------------
     st.write("---")
-    st.markdown("### 🚀 Bước 4: Điều phối truyền file")
+    st.markdown("### 🚀 Bước 4: Điều phối triển khai")
     
-    # Truy vấn lấy cả thông tin Artifact để hiển thị
-    recent = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(3).execute()
+    recent_deployments = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(5).execute()
     
-    if recent.data:
-        for d in recent.data:
+    if recent_deployments.data:
+        for d in recent_deployments.data:
             with st.container(border=True):
-                c1, c2 = st.columns([3, 1])
-                c1.subheader(f"Campaign #{d['id']} - {d['artifacts']['file_name']}")
-                c1.caption(f"Loại: {d['artifacts']['file_type']} | Phiên bản: {d['artifacts']['version']}")
+                col_info, col_btn = st.columns([3, 1])
                 
-                # Nút bấm kích hoạt truyền file
+                with col_info:
+                    st.subheader(f"Campaign #{d['id']} | {d['artifacts']['file_name']}")
+                    st.caption(f"Phiên bản: {d['artifacts']['version']} | Chế độ: {d['mode']}")
+                
+                # Nút điều khiển
                 if d["status"] == "ready":
-                    if c2.button("▶ START", key=f"run_{d['id']}", type="primary", use_container_width=True):
+                    if col_btn.button("▶ START", key=f"btn_{d['id']}", type="primary", use_container_width=True):
+                        # Fix lỗi ISO Timezone bằng string format đơn giản
+                        now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S%z')
+                        
                         sb.table("deployments").update({
-                            "status": "transferring", 
-                            "started_at": datetime.now(timezone.utc).isoformat()
+                            "status": "transferring", "started_at": now_str
                         }).eq("id", d["id"]).execute()
                         
                         sb.table("deployment_targets").update({"status": "pending"}).eq("deployment_id", d["id"]).execute()
-                        st.toast("🚀 Đang phát lệnh truyền file tới các Agent!")
-                        time.sleep(1)
+                        st.toast(f"Đã phát lệnh cho Campaign #{d['id']}")
                         st.rerun()
                 
-                # Hiển thị tiến độ nếu đang chạy
-                t_res = sb.table("deployment_targets").select("progress").eq("deployment_id", d["id"]).execute()
-                if t_res.data:
-                    df_res = pd.DataFrame(t_res.data)
-                    avg_p = int(df_res["progress"].mean())
-                    st.progress(avg_p / 100)
-                    st.caption(f"Tiến độ tổng thể: {avg_p}%")
+                # Thanh tiến độ tổng quát
+                targets_res = sb.table("deployment_targets").select("*").eq("deployment_id", d["id"]).execute()
+                if targets_res.data:
+                    df_targets = pd.DataFrame(targets_res.data)
+                    avg_progress = int(df_targets["progress"].mean())
+                    
+                    st.progress(avg_progress / 100)
+                    
+                    # Drill-down chi tiết từng máy
+                    with st.expander(f"📊 Chi tiết tiến độ ({len(df_targets)} thiết bị)"):
+                        # Style bảng trạng thái
+                        def color_status(val):
+                            color = 'green' if val == 'completed' else 'orange' if val == 'transferring' else 'red' if val == 'failed' else 'gray'
+                            return f'color: {color}'
+                        
+                        st.dataframe(
+                            df_targets[['machine_id', 'status', 'progress', 'updated_at']],
+                            column_config={
+                                "progress": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100),
+                                "status": "Trạng thái"
+                            },
+                            use_container_width=True,
+                            hide_index=True
+                        )
+    else:
+        st.info("Chưa có chiến dịch triển khai nào được tạo.")
 with t_sum:
     # 🔵 LEVEL 1: EXECUTIVE SNAPSHOT (10s Insight)
     st.markdown("# 🧠 System Intelligence Dashboard")
