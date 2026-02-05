@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone  # Thêm timezone vào đây
 import plotly.express as px
 import base64, zlib, time
+import plotly.express as px
 import math
 import hashlib, uuid, time, math
 import numpy as np
@@ -732,21 +733,22 @@ with t_sum:
 
 with t_offline:
     st.header("🕵️ AI Forensics – Khám nghiệm sự cố")
-    st.caption("Dựa trên Event Semantic - Cấu trúc bảng thực tế (V3.4)")
+    st.caption("Phiên bản V3.6: Semantic Analytics & Visual Timeline")
 
     df_evt = pd.DataFrame()
 
-    # 1. Control Plane
-    col_ctrl1, col_ctrl2 = st.columns([1, 1])
+    # 1. CONTROL PLANE (Nâng cấp Slider & Filter)
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2, 1, 1])
     with col_ctrl1:
-        target_id = st.text_input("🔍 Nhập Machine ID cần truy vết", placeholder="Ví dụ: DESKTOP-MFGVLKI")
+        target_id = st.text_input("🔍 Machine ID", placeholder="Nhập mã thiết bị...")
     with col_ctrl2:
-        days = st.slider("Phạm vi hồi tố (ngày)", 1, 30, 7)
+        days = st.slider("Hồi tố", 1, 90, 14)
+    with col_ctrl3:
+        min_sev = st.selectbox("Severity Filter", ["INFO", "HIGH", "CRITICAL"])
 
     if target_id:
         try:
-            # 2. Query chuẩn xác theo hình ảnh sếp gửi
-            # ID dùng machine_id | Thời gian dùng detected_at
+            # 2. QUERY DỮ LIỆU
             res = (
                 sb.table("device_events")
                   .select("*")
@@ -755,51 +757,70 @@ with t_offline:
                   .order("detected_at", desc=True)
                   .execute()
             )
-            
             df_evt = pd.DataFrame(res.data)
 
             if df_evt.empty:
-                st.warning(f"🔎 Không tìm thấy dữ liệu cho máy: {target_id}")
+                st.warning(f"🔎 Không có dữ liệu cho máy: {target_id}")
             else:
-                # 3. AI ROOT CAUSE INFERENCE
-                st.markdown("### 🧠 AI Root Cause Inference")
+                # 🟦 NÂNG CẤP 1: HEALTH SCORE METER
+                st.write("---")
+                avg_off = df_evt['off_minutes'].mean()
+                total_events = len(df_evt)
+                # Tính điểm sức khỏe (càng nhiều event critical điểm càng thấp)
+                health_score = max(0, 100 - (total_events * 5) - (avg_off * 0.5))
                 
-                # Phân tích dựa trên off_minutes (cột thực tế trong hình)
-                long_downtime = df_evt[df_evt['off_minutes'] > 15]
-                
-                with st.container(border=True):
-                    c1, c2 = st.columns([1, 4])
-                    if not long_downtime.empty:
-                        c1.error("CRITICAL")
-                        st.subheader("🚨 Cảnh báo gián đoạn kéo dài")
-                        st.write(f"Phát hiện đợt sập mạng kéo dài {long_downtime['off_minutes'].max()} phút. Đây có thể là lỗi phần cứng hoặc mất điện diện rộng.")
-                    else:
-                        c1.warning("STABLE")
-                        st.subheader("📡 Nhiễu mạng cục bộ")
-                        st.write("Các đợt offline chỉ diễn ra trong thời gian ngắn. Khả năng cao do đường truyền ISP không ổn định.")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Health Score", f"{health_score:.0f}/100", delta=None)
+                c2.metric("Avg Downtime", f"{avg_off:.1f}m")
+                c3.metric("Total Events", total_events)
 
-                # 4. SEMANTIC TIMELINE (Dùng detected_at)
-                st.markdown("### 🕒 Timeline Replay")
-                for _, row in df_evt.iterrows():
-                    # Lấy Icon theo severity (cột vừa thêm ở Bước 1)
-                    sev = row.get('severity', 'INFO')
-                    icon = "🔴" if sev == "CRITICAL" else ("🟠" if sev == "HIGH" else "🔵")
-                    
-                    with st.expander(f"{icon} {row['detected_at']} — {row['event_type']}"):
-                        col_a, col_b = st.columns([3, 1])
-                        with col_a:
+                # 🟧 NÂNG CẤP 2: HEATMAP TIMELINE (Phân bổ sự cố)
+                st.markdown("### 📈 Incident Distribution")
+                df_evt['hour'] = pd.to_datetime(df_evt['detected_at']).dt.hour
+                fig_heat = px.histogram(df_evt, x='hour', color='severity', 
+                                       nbins=24, title="Tần suất sự cố theo khung giờ",
+                                       color_discrete_map={"CRITICAL": "#FF4B4B", "HIGH": "#FFA500", "INFO": "#00CCFF"})
+                st.plotly_chart(fig_heat, use_container_width=True)
+
+                # 🟨 NÂNG CẤP 3: AI ROOT CAUSE (Nâng cấp logic suy luận)
+                st.markdown("### 🧠 AI Root Cause Inference")
+                with st.status("AI đang phân tích mẫu dữ liệu...", expanded=True):
+                    max_cpu = df_evt['cpu_usage'].max()
+                    if avg_off > 15 and max_cpu > 85:
+                        st.error(f"**Kết luận:** Hệ thống bị treo cứng (Hard Freeze). CPU đạt ngưỡng {max_cpu}% gây mất kết nối.")
+                    elif total_events > 5:
+                        st.warning("**Kết luận:** Hạ tầng mạng không ổn định (Flapping). Ghi nhận nhiều lần kết nối lại trong thời gian ngắn.")
+                    else:
+                        st.success("**Kết luận:** Sự cố đơn lẻ, có thể do thao tác bảo trì thủ công.")
+
+                # 🟩 NÂNG CẤP 4: TIMELINE REPLAY (Semantic View)
+                st.markdown("### 🕒 Forensic Timeline Replay")
+                # Filter theo lựa chọn của người dùng
+                filtered_df = df_evt if min_sev == "INFO" else df_evt[df_evt['severity'] == min_sev]
+                
+                for _, row in filtered_df.iterrows():
+                    icon = "🔴" if row['severity'] == "CRITICAL" else ("🟠" if row['severity'] == "HIGH" else "🔵")
+                    with st.expander(f"{icon} {row['detected_at']} | {row['event_type']}"):
+                        ca, cb = st.columns([3, 1])
+                        with ca:
                             st.json(row.get('details', {}))
-                        with col_b:
-                            st.metric("Offline", f"{row['off_minutes']}m")
-                            st.caption(f"CPU: {row.get('cpu_usage')}% | RAM: {row.get('ram_usage')}%")
+                            st.caption(f"Category: {row.get('event_category', 'SYSTEM')}")
+                        with cb:
+                            st.metric("Off Time", f"{row['off_minutes']:.0f}m")
+                            st.progress(row['cpu_usage']/100, text=f"CPU: {row['cpu_usage']}%")
 
         except Exception as e:
-            st.error(f"❌ Lỗi truy vấn Forensics: {e}")
-            st.info("💡 Đảm bảo sếp đã chạy lệnh SQL ở Bước 1 để thêm các cột severity, event_category.")
+            st.error(f"❌ Lỗi thực thi: {e}")
 
-# --- SAFE EXPORT ---
+# --- ENHANCED EXPORT ---
 if not df_evt.empty:
-    st.download_button("📥 Xuất báo cáo pháp y", df_evt.to_json(), f"Forensic_{target_id}.json")
+    st.write("---")
+    col_ex1, col_ex2 = st.columns(2)
+    with col_ex1:
+        st.download_button("📥 Export JSON Report", df_evt.to_json(), f"Forensic_{target_id}.json", use_container_width=True)
+    with col_ex2:
+        if st.button("📄 Generate PDF Summary", use_container_width=True):
+            st.toast("Tính năng PDF đang được đóng gói cho bản V3.7!")
 
 import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu file
 
