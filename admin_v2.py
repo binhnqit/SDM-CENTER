@@ -1072,36 +1072,42 @@ def render_ai_strategic_hub_v3(df_d, now_dt, sb):
 
 # --- PHẦN GỌI TAB TRONG APP CHÍNH (SỬA LỖI THỤT LỀ TẠI ĐÂY) ---
 with t_ai:
-    if not df_d.empty:
+    # CHỐT HẠ: Thay df_d bằng df_inv để tránh NameError
+    if not df_inv.empty:
         try:
+            # 0. Chuẩn bị dữ liệu an toàn
             now_dt_aware = datetime.now(timezone.utc)
-            if 'last_seen_dt' not in df_d.columns:
-                df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
+            df_ai_work = df_inv.copy()
             
-            # 1. Sidebar Control
+            # Xử lý cột last_seen an toàn
+            if 'last_seen' in df_ai_work.columns:
+                df_ai_work['last_seen_dt'] = pd.to_datetime(df_ai_work['last_seen'], utc=True)
+            
+            # 1. Sidebar Control - Nút nhấn để AI bắt đầu học
             if st.sidebar.button("🎨 Capture Color Learning Snapshot"):
-                with st.spinner("AI đang phân tích dữ liệu pha màu..."):
+                with st.spinner("AI đang phân tích hành vi pha màu..."):
+                    # Đảm bảo class AI_Color_Insight_Engine đã được định nghĩa trong code của sếp
                     df_learn = AI_Color_Insight_Engine.load_learning_data(sb, days=30)
                     snap = AI_Color_Insight_Engine.generate_snapshot(df_learn)
                     AI_Color_Insight_Engine.save_snapshot(sb, snap)
-                    st.toast("🎨 AI đã học xong hành vi pha màu!")
+                    st.toast("🎨 AI đã cập nhật mô hình học máy thành công!")
                     time.sleep(1)
                     st.rerun()
 
-            # 2. Render Strategic Hub (Phần cũ)
-            render_ai_strategic_hub_v3(df_d, now_dt_aware, sb)
+            # 2. Render Strategic Hub (Dùng df_ai_work đã sạch lỗi)
+            # Lưu ý: Sửa hàm này nếu bên trong nó vẫn dùng biến df_d
+            render_ai_strategic_hub_v3(df_ai_work, now_dt_aware, sb)
 
-            st.write("---") # Đường kẻ phân cách cho đẹp
+            st.write("---") 
 
-            # 3. PHẦN CODE MỚI CỦA SẾP: AI Learning Insights
-            st.markdown("## 🎨 AI Learning – Hành vi pha màu")
+            # 3. AI Learning Insights - Hiển thị thành quả
+            st.markdown("## 🎨 AI Learning – Phân tích hành vi")
 
-            # Truy vấn Snapshot màu mới nhất
-            # Lưu ý: Sửa 'generated_at' thành 'created_at' nếu sếp dùng cột mặc định của Supabase
+            # Truy vấn Snapshot mới nhất từ Supabase
             res = (
                 sb.table("ai_color_snapshots")
                   .select("*")
-                  .order("id", desc=True) # Sếp dùng 'id' hoặc 'created_at' để lấy bản mới nhất
+                  .order("id", desc=True) 
                   .limit(1)
                   .execute()
             )
@@ -1114,39 +1120,48 @@ with t_ai:
                     st.markdown("**🏆 Top màu pha nhiều nhất**")
                     if "top_colors" in snap and snap["top_colors"]:
                         df_top_colors = pd.DataFrame(snap["top_colors"])
-                        # Vẽ biểu đồ bar cho sinh động luôn sếp nhé
-                        fig_colors = px.bar(df_top_colors, x='color_code', y='mix_count', 
-                                            color='mix_count', color_continuous_scale='Blues')
+                        # Biểu đồ cột thể hiện độ hot của mã màu
+                        fig_colors = px.bar(
+                            df_top_colors, x='color_code', y='mix_count', 
+                            color='mix_count', color_continuous_scale='Blues',
+                            labels={'color_code': 'Mã màu', 'mix_count': 'Số lần pha'}
+                        )
                         st.plotly_chart(fig_colors, use_container_width=True)
                         st.dataframe(df_top_colors, use_container_width=True, hide_index=True)
                     else:
-                        st.info("Chưa có dữ liệu màu.")
+                        st.info("Chưa có dữ liệu màu phổ biến.")
 
                 with c_ai2:
                     st.markdown("**🧪 Top tinh màu tiêu thụ**")
                     if "top_pigments" in snap and snap["top_pigments"]:
                         df_top_pig = pd.DataFrame(snap["top_pigments"])
-                        fig_pig = px.pie(df_top_pig, names='pigment_code', values='volume', hole=0.4)
-                        st.plotly_chart(fig_pig, use_container_width=True)
+                        # Biểu đồ tròn thể hiện tỷ lệ tiêu thụ tinh màu
+                        fig_pie = px.pie(
+                            df_top_pig, names='pigment_code', values='volume', 
+                            hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel
+                        )
+                        st.plotly_chart(fig_pie, use_container_width=True)
                         st.dataframe(df_top_pig, use_container_width=True, hide_index=True)
                     else:
-                        st.info("Chưa có dữ liệu tinh màu.")
+                        st.info("Chưa có dữ liệu tiêu thụ tinh màu.")
 
-                st.markdown("**📊 Thống kê sử dụng hệ thống**")
-                # Hiển thị dạng Metric cho giống phong cách Apple
+                # Thống kê hiệu suất hệ thống
+                st.markdown("**📊 Chỉ số vận hành AI**")
                 if "usage_stats" in snap:
                     u1, u2, u3 = st.columns(3)
                     stats = snap["usage_stats"]
                     u1.metric("Tổng dung lượng (Lít)", f"{stats.get('total_volume', 0):.2f}")
                     u2.metric("Trung bình/Lần pha", f"{stats.get('avg_volume_per_mix', 0):.2f}")
-                    u3.metric("Tổng số bản ghi AI", snap.get("total_records", 0))
+                    u3.metric("Tổng bản ghi học tập", snap.get("total_records", 0))
             else:
-                st.info("Chưa có snapshot màu – hãy nhấn 'Capture' ở Sidebar để bắt đầu học.")
+                st.info("💡 Hệ thống AI chưa có snapshot. Hãy nhấn 'Capture' ở Sidebar để tạo dữ liệu học tập.")
 
         except Exception as e:
-            st.error(f"Lỗi AI Insight: {e}")
+            st.error(f"❌ Lỗi xử lý AI Insight: {e}")
+            # In lỗi chi tiết ra console để sếp debug nếu cần
+            print(f"DEBUG AI: {str(e)}")
     else:
-        st.info("Đang kết nối với trung tâm dữ liệu...")
+        st.info("📡 Đang đồng bộ hóa dữ liệu từ trung tâm...")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
