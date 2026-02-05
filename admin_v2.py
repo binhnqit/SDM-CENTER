@@ -334,79 +334,83 @@ with t_tokens:
 with t_mon:
     st.subheader("🖥️ Trung tâm Giám sát Thiết bị")
     
-    if not df_d.empty:
-        # --- 1. XỬ LÝ DỮ LIỆU ---
-        df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
+    # --- 1. LOAD DỮ LIỆU QUA RPC ---
+    try:
+        # Gọi hàm SQL RPC sếp đã tạo
+        res = sb.rpc("latest_agent_heartbeats").execute()
+        df_hb = pd.DataFrame(res.data)
+    except Exception as e:
+        st.error(f"❌ Lỗi kết nối RPC: {e}")
+        df_hb = pd.DataFrame()
+
+    if not df_hb.empty:
+        # --- 2. PHÂN LOẠI ONLINE / DEAD (CHUẨN STEP 2) ---
         now_dt = datetime.now(timezone.utc)
+        df_hb['received_at_dt'] = pd.to_datetime(df_hb['received_at'], utc=True)
         
-        # Ngưỡng thời gian
-        HEARTBEAT_OK = 3    
-        HEARTBEAT_WARN = 10
-        HEARTBEAT_DEAD = 30
-
         # Tính phút vắng mặt
-        df_d['off_minutes'] = (now_dt - df_d['last_seen_dt']).dt.total_seconds() / 60
-        df_d['off_minutes'] = df_d['off_minutes'].apply(lambda x: max(0, round(x, 1)))
+        df_hb['off_minutes'] = (now_dt - df_hb['received_at_dt']).dt.total_seconds() / 60
+        df_hb['off_minutes'] = df_hb['off_minutes'].apply(lambda x: max(0, round(x, 1)))
 
-        # TÁCH TÊN USER: Giả định Agent gửi status dạng "Online | READY | TênUser"
-        # Nếu sếp gửi tên User ở cột khác, hãy đổi tên 'status' thành tên cột đó
-        def extract_user(status_str):
-            try:
-                if "|" in str(status_str):
-                    return status_str.split("|")[-1].strip()
-                return "Unknown"
-            except:
-                return "N/A"
-
-        df_d['User'] = df_d['status'].apply(extract_user)
-
-        # Phân loại trạng thái
-        def resolve_state(row):
-            if row['off_minutes'] <= HEARTBEAT_OK: return "🟢 Online"
-            if row['off_minutes'] <= HEARTBEAT_WARN: return "🟡 Unstable"
-            if row['off_minutes'] <= HEARTBEAT_DEAD: return "🔴 Offline"
+        def resolve_state(mins):
+            if mins <= 3: return "🟢 Online"
+            if mins <= 10: return "🟡 Unstable"
+            if mins <= 30: return "🔴 Offline"
             return "⚫ Dead"
 
-        df_d['monitor_state'] = df_d.apply(resolve_state, axis=1)
+        df_hb['monitor_state'] = df_hb['off_minutes'].apply(resolve_state)
 
-        # --- 2. METRICS TỔNG HỢP ---
+        # --- 3. METRICS TỔNG HỢP ---
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Thiết bị sẵn sàng", len(df_d[df_d['monitor_state'] == "🟢 Online"]))
-        m2.metric("Tín hiệu yếu", len(df_d[df_d['monitor_state'] == "🟡 Unstable"]))
-        m3.metric("Đang ngoại tuyến", len(df_d[df_d['monitor_state'] == "🔴 Offline"]))
-        m4.metric("Mất kết nối lâu", len(df_d[df_d['monitor_state'] == "⚫ Dead"]))
+        m1.metric("🟢 Sẵn sàng", len(df_hb[df_hb['monitor_state'] == "🟢 Online"]))
+        m2.metric("🟡 Tín hiệu yếu", len(df_hb[df_hb['monitor_state'] == "🟡 Unstable"]))
+        m3.metric("🔴 Ngoại tuyến", len(df_hb[df_hb['monitor_state'] == "🔴 Offline"]))
+        m4.metric("⚫ Mất kết nối", len(df_hb[df_hb['monitor_state'] == "⚫ Dead"]))
 
-        # --- 3. BỘ LỌC ---
-        st.write("")
+        # --- 4. BỘ LỌC TƯƠNG TÁC ---
+        st.write("---")
         c_search1, c_search2 = st.columns([1, 2])
         with c_search1:
-            search_user = st.text_input("👤 Tìm theo User:", placeholder="Tên user...")
+            search_query = st.text_input("👤 Tìm User/Hostname:", placeholder="Nhập tên...")
         with c_search2:
             state_filter = st.multiselect("Lọc trạng thái:", 
                                          ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"],
-                                         default=["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"])
-        
-        filtered_df = df_d[df_d['monitor_state'].isin(state_filter)]
-        if search_user:
-            filtered_df = filtered_df[filtered_df['User'].str.contains(search_user, case=False)]
+                                         default=["🟢 Online", "🟡 Unstable", "🔴 Offline"])
 
-        # --- 4. BẢNG DỮ LIỆU (User ở cột ĐẦU TIÊN) ---
+        # Thực thi lọc
+        filtered_df = df_hb[df_hb['monitor_state'].isin(state_filter)]
+        if search_query:
+            filtered_df = filtered_df[
+                (filtered_df['username'].str.contains(search_query, case=False, na=False)) |
+                (filtered_df['hostname'].str.contains(search_query, case=False, na=False))
+            ]
+
+        # --- 5. HIỂN THỊ BẢNG (STEP 3) ---
         st.dataframe(
-            filtered_df[['User', 'machine_id', 'monitor_state', 'off_minutes', 'cpu_usage', 'ram_usage', 'last_seen_dt']],
+            filtered_df[['username', 'hostname', 'machine_id', 'monitor_state', 
+                         'operational_state', 'off_minutes', 'cpu_usage', 'ram_usage', 'received_at']],
             column_config={
-                "User": st.column_config.TextColumn("👤 Người dùng", help="Tên tài khoản Windows đăng nhập"),
-                "machine_id": "Mã Máy",
-                "monitor_state": "Trạng Thái",
-                "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f phút"),
+                "username": "👤 User",
+                "hostname": "💻 Hostname",
+                "machine_id": "🆔 Machine ID",
+                "monitor_state": "Trạng thái",
+                "operational_state": st.column_config.BadgeColumn("Agent Mode", help="READY/LOCKED từ Agent V15"),
+                "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f min"),
                 "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
                 "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
-                "last_seen_dt": "Cập nhật cuối"
+                "received_at": "Heartbeat cuối"
             },
             use_container_width=True,
             hide_index=True
         )
+
+        # --- 6. GỢI Ý FORENSIC (LUỒNG 4) ---
+        critical_machines = filtered_df[filtered_df['off_minutes'] > 10]
+        if not critical_machines.empty:
+            st.warning(f"🚨 Phát hiện {len(critical_machines)} máy có dấu hiệu sự cố. Hãy kiểm tra tab **AI Forensics**.")
+
     else:
-        st.info("Chưa có dữ liệu thiết bị.")
+        st.info("📡 Đang chờ tín hiệu từ các máy trạm...")
 
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
