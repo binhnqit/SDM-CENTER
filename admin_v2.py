@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone  # Thêm timezone vào đây
 import plotly.express as px
 import base64, zlib, time
 import math
+import hashlib, uuid, time, math
 import numpy as np
 def sanitize_df(df: pd.DataFrame):
     return (
