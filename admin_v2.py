@@ -731,7 +731,7 @@ with t_sum:
     # 🔵 LEVEL 1: EXECUTIVE SNAPSHOT (10s Insight)
     st.markdown("# 🧠 System Intelligence Dashboard")
     
-    if not df_d.empty:
+    if not df_inv.empty:
         # Tính toán nhanh các chỉ số
         total_m = len(df_d)
         online_m = len(df_d[df_d['monitor_state'] == "🟢 Online"])
