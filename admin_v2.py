@@ -367,11 +367,11 @@ with t_mon:
             if DEALER_COL_NAME not in df_mon.columns:
                 df_mon[DEALER_COL_NAME] = "Chưa phân loại"
         else:
-            df_mon = pd.DataFrame(columns=[DEALER_COL_NAME])
+            df_mon = pd.DataFrame(columns=[DEALER_COL_NAME, 'hostname', 'machine_id'])
             
     except Exception as e:
         st.error(f"❌ Lỗi kết nối dữ liệu: {e}")
-        df_mon = pd.DataFrame(columns=[DEALER_COL_NAME])
+        df_mon = pd.DataFrame(columns=[DEALER_COL_NAME, 'hostname', 'machine_id'])
 
     # --- 2. KIỂM TRA DỮ LIỆU TRƯỚC KHI XỬ LÝ ---
     if not df_mon.empty and 'received_at' in df_mon.columns:
@@ -390,7 +390,6 @@ with t_mon:
             if mins <= 30: return "🔴 Offline"
             return "⚫ Dead"
 
-        # DÙNG ĐÚNG BIẾN df_mon
         df_mon['monitor_state'] = df_mon['off_minutes'].apply(resolve_state)
         
         df_mon['mode_display'] = df_mon['operational_state'].apply(
@@ -404,69 +403,75 @@ with t_mon:
         m3.metric("🔴 Offline", len(df_mon[df_mon['monitor_state'] == "🔴 Offline"]))
         m4.metric("⚫ Dead", len(df_mon[df_mon['monitor_state'] == "⚫ Dead"]))
 
-        # --- 5. BỘ LỌC TƯƠNG TÁC ---
+        # --- 5. BỘ LỌC TƯƠNG TÁC (TÌM THEO HOSTNAME) ---
         st.write("---")
         c_search1, c_search2 = st.columns([1, 2])
         with c_search1:
-            search_query = st.text_input("🔍 Tìm máy/người dùng:", placeholder="Nhập tên, ID...", key="mon_search")
+            search_query = st.text_input("🔍 Tìm theo Hostname/User:", placeholder="Nhập tên máy...", key="mon_search")
         with c_search2:
             all_states = ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"]
             state_filter = st.multiselect("Lọc trạng thái hiển thị:", all_states, default=all_states[:2])
 
-        # Thực thi Filter trên df_mon
+        # Thực thi Filter
         f_df = df_mon[df_mon['monitor_state'].isin(state_filter)]
         if search_query:
             f_df = f_df[
                 (f_df['username'].str.contains(search_query, case=False, na=False)) |
-                (f_df['hostname'].str.contains(search_query, case=False, na=False)) |
-                (f_df['machine_id'].str.contains(search_query, case=False, na=False))
+                (f_df['hostname'].str.contains(search_query, case=False, na=False))
             ]
 
-        # --- 6. DATA TABLE ---
+        # --- 6. DATA TABLE (ƯU TIÊN HOSTNAME) ---
         f_df = f_df.sort_values("received_at", ascending=False)
         
         st.dataframe(
-            f_df[['username', 'hostname', DEALER_COL_NAME, 'monitor_state', 'mode_display', 
-                  'cpu_usage', 'ram_usage', 'heartbeat_seq', 'off_minutes', 'received_at']],
+            f_df[['hostname', 'username', DEALER_COL_NAME, 'monitor_state', 'mode_display', 
+                  'cpu_usage', 'ram_usage', 'off_minutes', 'received_at']],
             column_config={
+                "hostname": "💻 Tên Máy (Hostname)",
                 "username": st.column_config.TextColumn("👤 User"),
-                "hostname": "💻 Hostname",
-                DEALER_COL_NAME: "📍 Vị trí/Đại lý",
+                DEALER_COL_NAME: "📍 Đại lý",
                 "monitor_state": "Trạng thái",
                 "mode_display": "Agent Mode",
                 "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
                 "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
                 "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f m"),
-                "received_at": "Lần cuối"
+                "received_at": "Lần cuối (UTC)"
             },
             use_container_width=True,
             hide_index=True
         )
 
-        # --- 7. QUICK CONTROL PANEL ---
+        # --- 7. QUICK CONTROL PANEL (CHỌN THEO HOSTNAME) ---
         st.write("---")
         col_ctrl1, col_ctrl2 = st.columns([2, 1])
         with col_ctrl1:
             st.subheader("⚡ Remote Control")
-            target_machine = st.selectbox("Chọn thiết bị mục tiêu:", f_df['machine_id'].unique() if not f_df.empty else [])
+            # Tạo dictionary để người dùng chọn Hostname nhưng lấy được ID
+            host_to_id_map = {f"{row['hostname']} ({row['username']})": row['machine_id'] for _, row in f_df.iterrows()}
+            selected_host_label = st.selectbox(
+                "Chọn thiết bị mục tiêu (theo Hostname):", 
+                options=list(host_to_id_map.keys()) if host_to_id_map else ["Không có máy phù hợp"]
+            )
+            target_machine_id = host_to_id_map.get(selected_host_label)
         
         with col_ctrl2:
             st.write(""); st.write("")
             btn_lock, btn_unlock = st.columns(2)
-            if btn_lock.button("🔒 LOCK", type="primary", use_container_width=True):
-                sb.table("commands").insert({"machine_id": target_machine, "command": "LOCK", "is_executed": False}).execute()
-                st.toast(f"Đã gửi lệnh KHÓA tới {target_machine}")
-            if btn_unlock.button("🔓 UNLOCK", use_container_width=True):
-                sb.table("commands").insert({"machine_id": target_machine, "command": "UNLOCK", "is_executed": False}).execute()
-                st.toast(f"Đã gửi lệnh MỞ KHÓA tới {target_machine}")
+            if target_machine_id:
+                if btn_lock.button("🔒 LOCK", type="primary", use_container_width=True, key="mon_lock_btn"):
+                    sb.table("commands").insert({"machine_id": target_machine_id, "command": "LOCK", "is_executed": False}).execute()
+                    st.toast(f"✅ Đã gửi lệnh KHÓA tới {selected_host_label}")
+                
+                if btn_unlock.button("🔓 UNLOCK", use_container_width=True, key="mon_unlock_btn"):
+                    sb.table("commands").insert({"machine_id": target_machine_id, "command": "UNLOCK", "is_executed": False}).execute()
+                    st.toast(f"✅ Đã gửi lệnh MỞ KHÓA tới {selected_host_label}")
 
         # --- 8. DEBUG SYSTEM ---
         with st.expander("🛠️ System Debug Information"):
             st.json({
                 "App UTC Now": now_dt.isoformat(),
-                "Dealer Column Mapping": dealer_col,
-                "Total Records": len(df_mon),
-                "Columns present": list(df_mon.columns)
+                "Total Online": len(df_mon[df_mon['monitor_state'] == "🟢 Online"]),
+                "Columns": list(df_mon.columns)
             })
     else:
         st.info("📡 Hệ thống đang sẵn sàng. Đang chờ Agent gửi tín hiệu đầu tiên...")
