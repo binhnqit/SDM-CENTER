@@ -361,10 +361,9 @@ with t_mon:
     # --- 1. LOAD DỮ LIỆU QUA RPC ---
     try:
         res = sb.rpc("latest_agent_heartbeats").execute()
-        df_mon = pd.DataFrame(res.data) # Đã đổi tên thành df_mon theo chuẩn
+        df_mon = pd.DataFrame(res.data) 
         
         if not df_mon.empty:
-            # Dòng này phải thẳng hàng với lệnh trên
             if DEALER_COL_NAME not in df_mon.columns:
                 df_mon[DEALER_COL_NAME] = "Chưa phân loại"
         else:
@@ -374,26 +373,36 @@ with t_mon:
         st.error(f"❌ Lỗi kết nối dữ liệu: {e}")
         df_mon = pd.DataFrame(columns=[DEALER_COL_NAME])
 
-          # --- 3. LOGIC TRẠNG THÁI & HIỂN THỊ ---
+    # --- 2. KIỂM TRA DỮ LIỆU TRƯỚC KHI XỬ LÝ ---
+    if not df_mon.empty and 'received_at' in df_mon.columns:
+        # Xử lý thời gian chuẩn UTC
+        now_dt = datetime.now(timezone.utc)
+        df_mon['received_at_dt'] = pd.to_datetime(df_mon['received_at'], utc=True)
+        
+        # Tính phút vắng mặt
+        df_mon['off_minutes'] = (now_dt - df_mon['received_at_dt']).dt.total_seconds() / 60
+        df_mon['off_minutes'] = df_mon['off_minutes'].apply(lambda x: max(0, round(x, 1)))
+
+        # --- 3. LOGIC TRẠNG THÁI & HIỂN THỊ ---
         def resolve_state(mins):
             if mins <= 3: return "🟢 Online"
             if mins <= 10: return "🟡 Unstable"
             if mins <= 30: return "🔴 Offline"
             return "⚫ Dead"
 
-        df_hb['monitor_state'] = df_hb['off_minutes'].apply(resolve_state)
+        # DÙNG ĐÚNG BIẾN df_mon
+        df_mon['monitor_state'] = df_mon['off_minutes'].apply(resolve_state)
         
-        # Icon hóa trạng thái Agent Mode
-        df_hb['mode_display'] = df_hb['operational_state'].apply(
+        df_mon['mode_display'] = df_mon['operational_state'].apply(
             lambda x: "🔐 LOCKED" if x == "LOCKED" else "✅ READY"
         )
 
         # --- 4. DASHBOARD METRICS ---
         m1, m2, m3, m4 = st.columns(4)
-        with m1: st.metric("🟢 Online", len(df_hb[df_hb['monitor_state'] == "🟢 Online"]))
-        with m2: st.metric("🟡 Unstable", len(df_hb[df_hb['monitor_state'] == "🟡 Unstable"]))
-        with m3: st.metric("🔴 Offline", len(df_hb[df_hb['monitor_state'] == "🔴 Offline"]))
-        with m4: st.metric("⚫ Dead", len(df_hb[df_hb['monitor_state'] == "⚫ Dead"]))
+        m1.metric("🟢 Online", len(df_mon[df_mon['monitor_state'] == "🟢 Online"]))
+        m2.metric("🟡 Unstable", len(df_mon[df_mon['monitor_state'] == "🟡 Unstable"]))
+        m3.metric("🔴 Offline", len(df_mon[df_mon['monitor_state'] == "🔴 Offline"]))
+        m4.metric("⚫ Dead", len(df_mon[df_mon['monitor_state'] == "⚫ Dead"]))
 
         # --- 5. BỘ LỌC TƯƠNG TÁC ---
         st.write("---")
@@ -404,8 +413,8 @@ with t_mon:
             all_states = ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"]
             state_filter = st.multiselect("Lọc trạng thái hiển thị:", all_states, default=all_states[:2])
 
-        # Thực thi Filter
-        f_df = df_hb[df_hb['monitor_state'].isin(state_filter)]
+        # Thực thi Filter trên df_mon
+        f_df = df_mon[df_mon['monitor_state'].isin(state_filter)]
         if search_query:
             f_df = f_df[
                 (f_df['username'].str.contains(search_query, case=False, na=False)) |
@@ -413,21 +422,20 @@ with t_mon:
                 (f_df['machine_id'].str.contains(search_query, case=False, na=False))
             ]
 
-        # --- 6. DATA TABLE (Bản ổn định cao) ---
+        # --- 6. DATA TABLE ---
         f_df = f_df.sort_values("received_at", ascending=False)
         
         st.dataframe(
-            f_df[['username', 'hostname', 'location', 'monitor_state', 'mode_display', 
+            f_df[['username', 'hostname', DEALER_COL_NAME, 'monitor_state', 'mode_display', 
                   'cpu_usage', 'ram_usage', 'heartbeat_seq', 'off_minutes', 'received_at']],
             column_config={
                 "username": st.column_config.TextColumn("👤 User"),
                 "hostname": "💻 Hostname",
-                "location": "📍 Vị trí/Đại lý",
+                DEALER_COL_NAME: "📍 Vị trí/Đại lý",
                 "monitor_state": "Trạng thái",
                 "mode_display": "Agent Mode",
                 "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
                 "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
-                "heartbeat_seq": st.column_config.NumberColumn("Seq", help="Nhịp tim liên tục"),
                 "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f m"),
                 "received_at": "Lần cuối"
             },
@@ -440,11 +448,10 @@ with t_mon:
         col_ctrl1, col_ctrl2 = st.columns([2, 1])
         with col_ctrl1:
             st.subheader("⚡ Remote Control")
-            target_machine = st.selectbox("Chọn thiết bị mục tiêu:", f_df['machine_id'].unique() if 'machine_id' in f_df.columns else [])
+            target_machine = st.selectbox("Chọn thiết bị mục tiêu:", f_df['machine_id'].unique() if not f_df.empty else [])
         
         with col_ctrl2:
-            st.write("") # Padding
-            st.write("")
+            st.write(""); st.write("")
             btn_lock, btn_unlock = st.columns(2)
             if btn_lock.button("🔒 LOCK", type="primary", use_container_width=True):
                 sb.table("commands").insert({"machine_id": target_machine, "command": "LOCK", "is_executed": False}).execute()
@@ -457,12 +464,10 @@ with t_mon:
         with st.expander("🛠️ System Debug Information"):
             st.json({
                 "App UTC Now": now_dt.isoformat(),
-                "First Heartbeat UTC": df_hb['received_at'].iloc[0] if not df_hb.empty else None,
                 "Dealer Column Mapping": dealer_col,
-                "Total Records": len(df_hb),
-                "Columns in df_d": list(df_d.columns)
+                "Total Records": len(df_mon),
+                "Columns present": list(df_mon.columns)
             })
-
     else:
         st.info("📡 Hệ thống đang sẵn sàng. Đang chờ Agent gửi tín hiệu đầu tiên...")
         if st.button("🔄 Thử tải lại"): st.rerun()
