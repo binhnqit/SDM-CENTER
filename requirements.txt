@@ -1,3 +1,4 @@
 supabase
 plotly
 pandas
+streamlit-autorefresh
