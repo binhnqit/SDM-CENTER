@@ -479,7 +479,6 @@ with t_ctrl:
         # --- 0. ĐỒNG BỘ TRẠNG THÁI (HYBRID LOGIC) ---
         df_display = df_inv.copy()
         
-        # Kết nối dữ liệu online/offline từ tab Monitoring
         if 'df_mon' in locals() and not df_mon.empty and 'monitor_state' in df_mon.columns:
             status_map = df_mon.set_index('machine_id')['monitor_state'].to_dict()
             df_display['monitor_state'] = df_display['machine_id'].map(status_map).fillna("⚫ Unknown")
@@ -506,8 +505,6 @@ with t_ctrl:
                     for i, (dealer, g) in enumerate(groups):
                         if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"q_sel_{dealer}"):
                             selected_by_logic.extend(g['machine_id'].tolist())
-                else:
-                    st.write("Không có dữ liệu phân nhóm.")
 
         with c_sel2:
             with st.expander("🚨 Lọc Rủi ro", expanded=False):
@@ -516,44 +513,49 @@ with t_ctrl:
                 if st.button("🚨 Chọn tất cả", use_container_width=True, key="btn_risk_sel"):
                     selected_by_logic.extend(risk_targets['machine_id'].tolist())
 
-        # --- 2. XỬ LÝ DỮ LIỆU TRƯỚC KHI ĐƯA VÀO EDITOR ---
+        # --- 2. CHUẨN HÓA DỮ LIỆU TUYỆT ĐỐI (FIX LỖI CỘT) ---
         if selected_by_logic:
             unique_targets = list(set(selected_by_logic))
             df_display.loc[df_display['machine_id'].isin(unique_targets), 'select'] = True
 
-        # Xác định cột User
-        user_col_final = 'username' if 'username' in df_display.columns else \
+        # Xác định cột User thực tế từ DB
+        actual_user_col = 'username' if 'username' in df_display.columns else \
                          ('User' if 'User' in df_display.columns else df_display.columns[1])
         
-        # Làm sạch cột để tránh lỗi StreamlitAPIException
-        final_cols = ['select', user_col_final, 'machine_id', 'monitor_state', 'status']
-        df_for_edit = df_display[final_cols].copy()
-        df_for_edit.columns = [str(c).strip() for c in df_for_edit.columns]
-        df_for_edit = df_for_edit.reset_index(drop=True)
+        # TẠO DATAFRAME MỚI TOANH VỚI TÊN CỘT CỐ ĐỊNH (Hard-coded)
+        # Cách này giúp tránh lỗi StreamlitAPIException do tên cột động
+        df_final = pd.DataFrame({
+            "Chon": df_display['select'].astype(bool),
+            "NguoiDung": df_display[actual_user_col].astype(str),
+            "MaMay": df_display['machine_id'].astype(str),
+            "KetNoi": df_display['monitor_state'].astype(str),
+            "TrangThai": df_display['status'].astype(str)
+        })
 
         # --- 3. DATA EDITOR ---
         st.write("---")
         edited = st.data_editor(
-            df_for_edit,
+            df_final,
             column_config={
-                "select": st.column_config.CheckboxColumn("Chọn", help="Tích để gửi lệnh"),
-                user_col_final: "Người dùng",
-                "machine_id": "Mã Máy",
-                "monitor_state": "Kết nối",
-                "status": "Trạng thái khóa"
+                "Chon": st.column_config.CheckboxColumn("Chọn", help="Tích để gửi lệnh"),
+                "NguoiDung": "👤 Người dùng",
+                "MaMay": "🆔 Mã Máy",
+                "KetNoi": "📡 Kết nối",
+                "TrangThai": "🔒 Khóa/Mở"
             },
-            disabled=[user_col_final, 'machine_id', 'monitor_state', 'status'],
+            disabled=["NguoiDung", "MaMay", "KetNoi", "TrangThai"],
             hide_index=True,
             use_container_width=True,
-            key="ctrl_editor_perfect_v5"
+            key="ctrl_editor_ultimate_v7" # Key mới để xóa sạch cache cũ
         )
 
         # --- 4. ACTION BAR ---
-        targets = edited[edited['select']]['machine_id'].tolist()
+        # Lấy danh sách ID dựa trên tên cột mới "MaMay"
+        targets = edited[edited['Chon'] == True]['MaMay'].tolist()
         
         if targets:
             st.markdown(f"### ⚡ Thực thi với **{len(targets)}** máy")
-            act1, act2, act3 = st.columns([1, 1, 2])
+            act1, act2 = st.columns(2)
             
             with act1:
                 if st.button("🔒 KHÓA MÁY", type="primary", use_container_width=True):
@@ -576,15 +578,11 @@ with t_ctrl:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Lỗi: {e}")
-            
-            with act3:
-                st.info("💡 Lệnh sẽ được thực hiện khi Agent gửi heartbeat kế tiếp.")
         else:
             st.info("👆 Tích chọn máy ở bảng trên để thực hiện lệnh.")
 
     else:
         st.warning("⚠️ Không có dữ liệu thiết bị.")
-
 
 # ==========================================
 # 0️⃣ KHỞI TẠO STATE (Đầu tab hoặc đầu file)
