@@ -470,13 +470,19 @@ with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
     st.caption("Chọn thiết bị theo danh sách, theo đại lý hoặc theo mức độ rủi ro để thực thi lệnh.")
 
-    if not df_inv.empty:  # Đổi df_d -> df_inv
-    # Bảo hiểm: Kiểm tra lại cột dealer một lần nữa trước khi xử lý sâu
-    if DEALER_COL_NAME not in df_inv.columns:
-        df_inv[DEALER_COL_NAME] = "Chưa phân loại"
+    
+    if not df_inv.empty:
+        # Dòng 475: Phải thụt lề vào 1 cấp so với IF phía trên
+        if DEALER_COL_NAME not in df_inv.columns:
+            df_inv[DEALER_COL_NAME] = "Chưa phân loại"
+        
+        # --- 1. CHUẨN BỊ DỮ LIỆU ĐIỀU KHIỂN ---
+        df_ctrl = df_inv.copy()
+        df_ctrl.insert(0, "select", False) 
 
-        # --- 2. GIAO DIỆN CHỌN THEO NHÓM (ACCORDION STYLE) ---
-        col_select1, col_select2 = st.columns([2, 1])        
+        # --- 2. GIAO DIỆN CHỌN THEO NHÓM ---
+        col_select1, col_select2 = st.columns([2, 1])
+        # ... tiếp tục các logic phía dưới ...   
         selected_by_dealer = []
         with col_select1:
             with st.expander("🏢 Chọn nhanh theo Đại lý (Dealer Group)"):
