@@ -732,72 +732,84 @@ with t_sum:
         st.warning("Đang chờ dữ liệu từ hệ thống Agent...")
 
 with t_offline:
-    st.header("🕵️ AI Forensics – Khám nghiệm sự cố")
-    st.caption("Phiên bản V3.6.1: Khắc phục lỗi Load Database")
+    st.header("🕵️ AI Forensics – Investigator Mode")
+    st.caption("Phiên bản V3.7: Event Chain & Evidence Binding")
 
     df_evt = pd.DataFrame()
 
     # 1. CONTROL PLANE
-    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2, 1, 1])
-    with col_ctrl1:
-        # Sếp hãy thử nhập ID: 0E883B79-449C-E811-A4C3-C8D9D2EB8C69
-        target_id = st.text_input("🔍 Machine ID", value=st.session_state.get('last_id', ""), placeholder="Dán mã ID vào đây...")
-    with col_ctrl2:
-        # Tăng mặc định lên 30 ngày để dễ tìm thấy dữ liệu cũ
-        days = st.slider("Phạm vi hồi tố (ngày)", 1, 180, 30)
-    with col_ctrl3:
-        min_sev = st.selectbox("Lọc mức độ", ["INFO", "HIGH", "CRITICAL"])
+    c_id, c_days = st.columns([2, 1])
+    target_id = c_id.text_input("🔍 Machine ID", placeholder="Nhập ID để dựng hiện trường...")
+    days = c_days.slider("Hồi tố", 1, 90, 14)
 
     if target_id:
         try:
-            # 2. TRUY VẤN DỮ LIỆU (Sử dụng đúng detected_at và machine_id từ Schema sếp gửi)
-            # Tính toán mốc thời gian chuẩn UTC để khớp với DB
-            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            
-            res = (
-                sb.table("device_events")
+            res = (sb.table("device_events")
                   .select("*")
                   .eq("machine_id", target_id)
-                  .gte("detected_at", cutoff_date)
-                  .order("detected_at", desc=True)
-                  .execute()
-            )
+                  .gte("detected_at", (datetime.now(timezone.utc) - timedelta(days=days)).isoformat())
+                  .order("detected_at", desc=True).execute())
             df_evt = pd.DataFrame(res.data)
 
-            if df_evt.empty:
-                st.warning(f"🔎 Không tìm thấy sự cố nào của máy này trong {days} ngày qua.")
-                # NÚT CỨU CÁNH: Thử tìm 5 bản ghi gần nhất bất kể thời gian
-                if st.button("🔍 Thử tìm dữ liệu lịch sử cũ hơn?"):
-                    res_fallback = sb.table("device_events").select("*").eq("machine_id", target_id).limit(5).execute()
-                    df_fallback = pd.DataFrame(res_fallback.data)
-                    if not df_fallback.empty:
-                        st.info("💡 Tìm thấy dữ liệu cũ từ trước đó. Đang hiển thị...")
-                        df_evt = df_fallback
-                    else:
-                        st.error("❌ Máy này thực sự chưa có bản ghi nào trong bảng device_events.")
-            
             if not df_evt.empty:
-                # Chuyển đổi format thời gian để vẽ biểu đồ
-                df_evt['detected_at'] = pd.to_datetime(df_evt['detected_at'])
-                
-                # --- [PHẦN HIỂN THỊ GIỮ NGUYÊN NHƯ V3.6] ---
-                st.success(f"✅ Đã load thành công {len(df_evt)} sự kiện.")
-                
-                # Biểu đồ phân bổ hour
-                df_evt['hour'] = df_evt['detected_at'].dt.hour
-                fig_heat = px.bar(df_evt['hour'].value_counts().reset_index(), x='hour', y='count', 
-                                 title="Tần suất theo giờ trong ngày", color_discrete_sequence=['#FF4B4B'])
-                st.plotly_chart(fig_heat, use_container_width=True)
+                # 🟦 4️⃣ CONCLUSION BLOCK (AI kết luận cuối cùng)
+                st.markdown("### 🧠 AI Final Conclusion")
+                with st.container(border=True):
+                    # Phân tích sơ bộ để AI kết luận
+                    has_tamper = "AGENT_KILLED" in df_evt['event_type'].values
+                    max_off = df_evt['off_minutes'].max()
+                    
+                    if has_tamper:
+                        st.error("🚨 **KẾT LUẬN:** Phát hiện hành vi can thiệp trái phép. Agent bị tắt chủ động từ Process Manager. Cần kiểm tra lịch sử đăng nhập User.")
+                    elif max_off > 30:
+                        st.warning("⚠️ **KẾT LUẬN:** Sự cố hạ tầng nghiêm trọng. Máy mất nguồn hoặc mất mạng diện rộng trong thời gian dài. Khả năng cao là lỗi **POWER** hoặc **HARDWARE**.")
+                    else:
+                        st.info("ℹ️ **KẾT LUẬN:** Hệ thống hoạt động trong điều kiện mạng không ổn định (Network Instability).")
 
-                # Timeline
+                # 🟧 1️⃣ EVENT CHAIN INFERENCE & 2️⃣ CAUSE LABEL
+                st.markdown("### 🔗 Event Chain Analysis")
+                
+                # Vẽ chuỗi sự kiện (Simplified Chain)
+                chain_cols = st.columns(len(df_evt[:4]) if len(df_evt) >= 1 else 1)
+                for i, (_, row) in enumerate(df_evt[:4].iterrows()):
+                    # Xác định Cause Label (2️⃣)
+                    cause_label = row.get('event_category', 'UNKNOWN')
+                    if "KILLED" in row['event_type']: cause_label = "AGENT"
+                    elif "OFFLINE" in row['event_type']: cause_label = "NETWORK"
+                    
+                    with chain_cols[i]:
+                        st.code(f"{row['event_type']}\n[{cause_label}]")
+                        if i < len(chain_cols)-1: st.write("➡️")
+
+                # 🟨 3️⃣ EVIDENCE SNAPSHOT BINDING
+                st.markdown("### 🕒 Forensic Timeline & Evidence")
                 for _, row in df_evt.iterrows():
-                    icon = "🔴" if row.get('severity') == "CRITICAL" else "🔵"
+                    sev = row.get('severity', 'INFO')
+                    icon = "🔴" if sev == "CRITICAL" else "🔵"
+                    
                     with st.expander(f"{icon} {row['detected_at']} | {row['event_type']}"):
-                        st.json(row.to_dict())
+                        col_l, col_r = st.columns([2, 1])
+                        with col_l:
+                            st.json(row.get('details', {}))
+                            
+                            # Kiểm tra Snapshot Binding (3️⃣)
+                            details = row.get('details', {})
+                            if isinstance(details, dict) and "snapshot_hash" in details:
+                                st.success(f"📎 **Evidence Attached:** `{details['snapshot_hash']}`")
+                                st.caption("Snapshot ghi lại trạng thái Process List & Network Connections lúc sự cố.")
+                            else:
+                                st.caption("No snapshot bound to this event.")
+
+                        with col_r:
+                            st.metric("Cause", cause_label)
+                            st.metric("Offline", f"{row['off_minutes']}m")
 
         except Exception as e:
-            st.error(f"❌ Lỗi kết nối Database: {e}")
+            st.error(f"❌ Forensic Error: {e}")
 
+# --- EXPORT ---
+if not df_evt.empty:
+    st.download_button("📥 Export Forensic Report", df_evt.to_json(), f"Forensic_{target_id}.json")
 import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu file
 
 # --- TRƯỚC HẾT: PHẢI CÓ CLASS NÀY THÌ TAB AI MỚI CHẠY ĐƯỢC ---
