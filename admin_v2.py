@@ -470,15 +470,13 @@ with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
     st.caption("Chọn thiết bị theo danh sách, theo đại lý hoặc theo mức độ rủi ro để thực thi lệnh.")
 
-    if not df_d.empty:
-        # --- 1. CHUẨN BỊ DỮ LIỆU ĐIỀU KHIỂN ---
-        # Đảm bảo đã có cột monitor_state và User từ Tab Giám sát
-        df_ctrl = df_d.copy()
-        df_ctrl.insert(0, "select", False) # Đưa cột tích chọn lên đầu
+    if not df_inv.empty:  # Đổi df_d -> df_inv
+    # Bảo hiểm: Kiểm tra lại cột dealer một lần nữa trước khi xử lý sâu
+    if DEALER_COL_NAME not in df_inv.columns:
+        df_inv[DEALER_COL_NAME] = "Chưa phân loại"
 
         # --- 2. GIAO DIỆN CHỌN THEO NHÓM (ACCORDION STYLE) ---
-        col_select1, col_select2 = st.columns([2, 1])
-        
+        col_select1, col_select2 = st.columns([2, 1])        
         selected_by_dealer = []
         with col_select1:
             with st.expander("🏢 Chọn nhanh theo Đại lý (Dealer Group)"):
