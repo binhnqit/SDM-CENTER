@@ -617,26 +617,25 @@ with t_file:
     st.write("---")
     st.markdown("### 🎯 Bước 2: Chọn máy triển khai")
     
-    if not df_d.empty:
-        df_m = df_d.copy()
-        # Mặc định chưa chọn
-        df_m["select"] = False 
+    # --- SỬA DÒNG 620 ---
+    if not df_inv.empty:
+        st.subheader("📁 Chuyển tập tin tới thiết bị")
         
-        edited = st.data_editor(
-            df_m[["select", "User", "machine_id", "status"]],
-            use_container_width=True, 
-            hide_index=True,
-            column_config={"select": st.column_config.CheckboxColumn("Chọn")}
+        # Tạo danh sách lựa chọn máy từ df_inv
+        # (Đảm bảo dùng đúng tên cột username/hostname của sếp)
+        device_options = df_inv.apply(
+            lambda x: f"{x['username']} | {x['hostname']} ({x['machine_id']})", axis=1
+        ).tolist()
+        
+        selected_devices = st.multiselect(
+            "Chọn thiết bị nhận file:", 
+            options=df_inv['machine_id'].tolist(),
+            format_func=lambda x: next((opt for opt in device_options if x in opt), x)
         )
         
-        # Cập nhật CHUẨN vào session_state như sếp chỉ đạo
-        st.session_state["selected_targets"] = edited[edited["select"]]["machine_id"].tolist()
-        targets = st.session_state["selected_targets"] # Alias để dùng cho Bước 3
-        
-        if targets:
-            st.info(f"📍 Đang giữ **{len(targets)}** máy trong bộ nhớ tạm.")
+        # ... các logic upload file phía dưới ...
     else:
-        st.warning("⚠️ Không có máy trực tuyến.")
+        st.warning("⚠️ Không có dữ liệu thiết bị để thực hiện truyền file.")
 
     # ---------------------------------------------------------
     # 3️⃣ BƯỚC 3: KHỞI TẠO CHIẾN DỊCH (Sử dụng State)
