@@ -174,9 +174,9 @@ with t_csv:
             index=ROLE_PRIORITY.index(st.session_state.current_role)
         )
 
-    # 🟦 STEP 1: RISK BREAKDOWN & ENFORCEMENT
+    # 🟦 STEP 1: RISK BREAKDOWN & ENFORCEMENT (NÂNG CẤP PIN)
     if st.session_state.v16_step == 1:
-        csv_file = st.file_uploader("Upload Batch CSV", type=["csv"], key="v16_uploader")
+        csv_file = st.file_uploader("Upload Batch CSV", type=["csv"], key="v16_final_up")
         if csv_file:
             df_csv = pd.read_csv(csv_file)
             analysis = GovernanceEngine.deep_risk_analysis(df_csv)
@@ -184,22 +184,36 @@ with t_csv:
             st.session_state.v16_analysis = analysis
             
             c1, c2 = st.columns([1, 2])
-            c1.metric("Batch Risk", f"{analysis['total_risk']:.2f}%", 
-                      delta="Critical" if analysis['total_risk'] > 15 else "Normal",
-                      delta_color="inverse" if analysis['total_risk'] > 15 else "normal")
-            
+            c1.metric("Batch Risk", f"{analysis['total_risk']:.2f}%")
             with c2:
                 st.markdown("**Risk Composition Analysis**")
                 for k, v in analysis['breakdown'].items():
                     st.caption(f"{k}: {v:.1f}%")
                     st.progress(min(v/20, 1.0))
 
-            # FLOW CONTROL (ENFORCEMENT)
+            # --- LOGIC XỬ LÝ QUYỀN HẠN & MÃ PIN ---
             p_current = ROLE_PRIORITY.index(st.session_state.current_role)
             p_required = ROLE_PRIORITY.index(analysis["required_role"])
 
+            # Trường hợp: Thiếu quyền
             if p_current < p_required:
-                st.error(f"🚫 **BLOCK:** Risk vượt mức cho phép. Cần cấp **{ROLES[analysis['required_role']]['label']}** phê duyệt.")
+                st.error(f"🚫 **ACCESS DENIED:** Batch risk ({analysis['total_risk']:.2f}%) yêu cầu cấp **{ROLES[analysis['required_role']]['label']}** phê duyệt.")
+                
+                # Ô nhập PIN mở khóa nhanh cho Quản lý/Giám đốc
+                st.markdown("---")
+                st.info(f"🔑 **Director/Manager Override:** Nhập mã PIN để mở khóa Batch này.")
+                input_pin = st.text_input("Security PIN", type="password", help="Chỉ dành cho cấp quản lý")
+                
+                # Giả sử PIN của sếp là '1234' (Sau này sếp có thể đổi)
+                if input_pin == "1234":
+                    st.success("🎯 PIN Chính xác! Quyền hạn đã được ghi đè (Overridden).")
+                    if st.button("FORCE PROCEED TO DRY-RUN", type="primary", use_container_width=True):
+                        st.session_state.v16_step = 2
+                        st.rerun()
+                elif input_pin != "":
+                    st.warning("❌ Mã PIN không hợp lệ.")
+            
+            # Trường hợp: Đủ quyền
             else:
                 st.success(f"✅ Quyền hạn **{ROLES[st.session_state.current_role]['label']}** đủ điều kiện.")
                 if st.button("PROCEED TO DRY-RUN SIMULATION", type="primary", use_container_width=True):
