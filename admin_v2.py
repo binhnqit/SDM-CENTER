@@ -593,16 +593,11 @@ if "deploy_mode" not in st.session_state:
     st.session_state["deploy_mode"] = "Rolling"
 
 with t_file:
-    from streamlit_autorefresh import st_autorefresh
-
-# Tự động refresh mỗi 5 giây để theo dõi tiến độ Agent
-    if d["status"] == "transferring":
-    st_autorefresh(interval=5000, key="deployment_monitor")
     st.markdown("## 📦 Deployment Center")
     st.caption("Quản lý vòng đời triển khai Artifact với cơ chế State-Tracking.")
 
     # ---------------------------------------------------------
-    # 1️⃣ BƯỚC 1: CHỌN ARTIFACT
+    # 1️⃣ BƯỚC 1: THÔNG TIN ARTIFACT
     # ---------------------------------------------------------
     with st.expander("📂 Bước 1: Thông tin Artifact", expanded=True):
         file = st.file_uploader("Kéo thả file cấu hình/firmware", type=["bin", "zip", "json", "cfg", "sdf"])
@@ -616,7 +611,7 @@ with t_file:
             deploy_mode = st.radio("Chế độ", ["Rolling", "All-at-once"], horizontal=True)
 
     # ---------------------------------------------------------
-    # 2️⃣ BƯỚC 2: CHỌN MỤC TIÊU
+    # 2️⃣ BƯỚC 2: CHỌN MÁY TRIỂN KHAI
     # ---------------------------------------------------------
     st.write("---")
     st.markdown("### 🎯 Bước 2: Chọn máy triển khai")
@@ -637,7 +632,7 @@ with t_file:
             "Chọn thiết bị nhận file:", 
             options=df_inv['machine_id'].tolist(),
             format_func=lambda x: next((opt for opt in device_options if x in opt), x),
-            key="deploy_select_machines"
+            key="deploy_select_machines_final"
         )
     else:
         st.warning("⚠️ Không có máy nào trong danh sách thiết bị.")
@@ -658,45 +653,36 @@ with t_file:
         if st.button("🏗️ XÁC NHẬN & TẠO CHIẾN DỊCH", type="primary", use_container_width=True):
             with st.status("⚙️ Đang đóng gói và lưu trữ Artifact...") as status:
                 try:
-                    # 1. Binary Processing
                     file_bytes = file.getvalue()
                     file_hash = hashlib.sha256(file_bytes).hexdigest()
                     b64_data = base64.b64encode(zlib.compress(file_bytes)).decode('utf-8')
                     
-                    # 2. Insert Artifact (Bỏ data_chunk nếu sếp chưa thêm cột, hoặc giữ nếu đã có)
-                    art_data = {
+                    art_res = sb.table("artifacts").insert({
                         "file_name": file.name, "file_type": file_type, "version": version,
-                        "checksum": file_hash, "size": round(len(file_bytes)/1024, 2)
-                    }
-                    # Kiểm tra và thêm data_chunk nếu sếp đã chạy lệnh SQL ALTER TABLE
-                    art_data["data_chunk"] = b64_data 
-
-                    art_res = sb.table("artifacts").insert(art_data).execute()
+                        "checksum": file_hash, "size": round(len(file_bytes)/1024, 2),
+                        "data_chunk": b64_data
+                    }).execute()
                     
                     if art_res.data:
                         art_id = art_res.data[0]["id"]
-                        
-                        # 3. Tạo Deployment Record
                         dep_res = sb.table("deployments").insert({
                             "artifact_id": art_id, "mode": deploy_mode, "status": "ready"
                         }).execute()
                         
                         if dep_res.data:
                             dep_id = dep_res.data[0]["id"]
-                            
-                            # 4. Tạo Target Records
                             t_records = [
                                 {"deployment_id": dep_id, "machine_id": m, "status": "staged", "progress": 0} 
                                 for m in selected_devices
                             ]
                             sb.table("deployment_targets").insert(t_records).execute()
                             
-                            status.update(label="✅ Chiến dịch đã sẵn sàng trên Staging!", state="complete")
+                            status.update(label="✅ Đã Staging thành công!", state="complete")
                             st.balloons()
                             time.sleep(1)
                             st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Lỗi: {e}")
+                    st.error(f"❌ Lỗi khởi tạo: {e}")
 
     # ---------------------------------------------------------
     # 4️⃣ BƯỚC 4: ĐIỀU PHỐI & GIÁM SÁT
@@ -707,54 +693,48 @@ with t_file:
     recent_deployments = sb.table("deployments").select("*, artifacts(*)").order("created_at", desc=True).limit(5).execute()
     
     if recent_deployments.data:
+        # Kiểm tra xem có bất kỳ campaign nào đang truyền file không để bật Auto-refresh
+        is_any_transferring = any(d['status'] == 'transferring' for d in recent_deployments.data)
+        if is_any_transferring:
+            from streamlit_autorefresh import st_autorefresh
+            st_autorefresh(interval=5000, key="global_deployment_monitor")
+
         for d in recent_deployments.data:
             with st.container(border=True):
                 col_info, col_btn = st.columns([3, 1])
                 
                 with col_info:
                     st.subheader(f"Campaign #{d['id']} | {d['artifacts']['file_name']}")
-                    st.caption(f"Phiên bản: {d['artifacts']['version']} | Chế độ: {d['mode']}")
+                    st.caption(f"Phiên bản: {d['artifacts']['version']} | Trạng thái: **{d['status'].upper()}**")
                 
-                # Nút điều khiển
                 if d["status"] == "ready":
                     if col_btn.button("▶ START", key=f"btn_{d['id']}", type="primary", use_container_width=True):
-                        # Fix lỗi ISO Timezone bằng string format đơn giản
                         now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S%z')
-                        
-                        sb.table("deployments").update({
-                            "status": "transferring", "started_at": now_str
-                        }).eq("id", d["id"]).execute()
-                        
+                        sb.table("deployments").update({"status": "transferring", "started_at": now_str}).eq("id", d["id"]).execute()
                         sb.table("deployment_targets").update({"status": "pending"}).eq("deployment_id", d["id"]).execute()
-                        st.toast(f"Đã phát lệnh cho Campaign #{d['id']}")
+                        st.toast("🚀 Đã kích hoạt truyền file!")
+                        time.sleep(0.5)
                         st.rerun()
                 
-                # Thanh tiến độ tổng quát
+                # Hiển thị tiến độ chi tiết
                 targets_res = sb.table("deployment_targets").select("*").eq("deployment_id", d["id"]).execute()
                 if targets_res.data:
                     df_targets = pd.DataFrame(targets_res.data)
                     avg_progress = int(df_targets["progress"].mean())
-                    
                     st.progress(avg_progress / 100)
                     
-                    # Drill-down chi tiết từng máy
-                    with st.expander(f"📊 Chi tiết tiến độ ({len(df_targets)} thiết bị)"):
-                        # Style bảng trạng thái
-                        def color_status(val):
-                            color = 'green' if val == 'completed' else 'orange' if val == 'transferring' else 'red' if val == 'failed' else 'gray'
-                            return f'color: {color}'
-                        
+                    with st.expander(f"📊 Chi tiết {len(df_targets)} thiết bị mục tiêu"):
                         st.dataframe(
                             df_targets[['machine_id', 'status', 'progress', 'updated_at']],
                             column_config={
-                                "progress": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100),
-                                "status": "Trạng thái"
+                                "progress": st.column_config.ProgressColumn("Tiến độ", min_value=0, max_value=100, format="%d%%"),
+                                "status": "Trạng thái",
+                                "updated_at": "Cập nhật cuối"
                             },
-                            use_container_width=True,
-                            hide_index=True
+                            use_container_width=True, hide_index=True
                         )
     else:
-        st.info("Chưa có chiến dịch triển khai nào được tạo.")
+        st.info("Chưa có chiến dịch nào.")
 with t_sum:
     # 🔵 LEVEL 1: EXECUTIVE SNAPSHOT (10s Insight)
     st.markdown("# 🧠 System Intelligence Dashboard")
