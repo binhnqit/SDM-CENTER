@@ -473,101 +473,102 @@ with t_mon:
         if st.button("🔄 Thử tải lại"): st.rerun()
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
-    st.caption("Chọn thiết bị theo danh sách, theo đại lý hoặc theo mức độ rủi ro để thực thi lệnh.")
+    st.caption("Chọn thiết bị theo danh sách, đại lý hoặc rủi ro để thực thi lệnh.")
 
-    
     if not df_inv.empty:
-        # Dòng 475: Phải thụt lề vào 1 cấp so với IF phía trên
-        if DEALER_COL_NAME not in df_inv.columns:
-            df_inv[DEALER_COL_NAME] = "Chưa phân loại"
+        # --- 0. ĐỒNG BỘ TRẠNG THÁI TỪ DF_MON (NẾU CÓ) ---
+        # Kết hợp df_inv với df_mon để lấy cột monitor_state
+        df_display = df_inv.copy()
+        
+        if 'df_mon' in locals() and not df_mon.empty:
+            # Ghép trạng thái từ df_mon qua machine_id
+            status_map = df_mon.set_index('machine_id')['monitor_state'].to_dict()
+            df_display['monitor_state'] = df_display['machine_id'].map(status_map).fillna("⚫ Unknown")
+        else:
+            df_display['monitor_state'] = "❓ N/A (Mở tab Giám sát trước)"
+
+        # Bảo hiểm cột Dealer
+        if DEALER_COL_NAME not in df_display.columns:
+            df_display[DEALER_COL_NAME] = "Chưa phân loại"
         
         # --- 1. CHUẨN BỊ DỮ LIỆU ĐIỀU KHIỂN ---
-        df_ctrl = df_inv.copy()
-        df_ctrl.insert(0, "select", False) 
+        df_display.insert(0, "select", False) 
 
-        # --- 2. GIAO DIỆN CHỌN THEO NHÓM ---
-        col_select1, col_select2 = st.columns([2, 1])
-        # ... tiếp tục các logic phía dưới ...   
-        selected_by_dealer = []
+        # --- 2. GIAO DIỆN CHỌN NHANH ---
+        selected_by_logic = []
         col_select1, col_select2 = st.columns([2, 1])
         
-        selected_by_dealer = []
         with col_select1:
-            # Dùng hằng số DEALER_COL_NAME để hiển thị tiêu đề
-            with st.expander(f"🏢 Chọn nhanh theo {DEALER_COL_NAME.upper()}", expanded=True):
-                # FIX LỖI: Kiểm tra trực tiếp trên df_inv và dùng DEALER_COL_NAME
-                if DEALER_COL_NAME in df_inv.columns:
-                    groups = df_inv.groupby(DEALER_COL_NAME)
-                    
-                    c_dealer = st.columns(3)
-                    for i, (dealer, g) in enumerate(groups):
-                        # Dùng key duy nhất để tránh lỗi Duplicate Widget ID
-                        if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"ctrl_grp_{dealer}"):
-                            selected_by_dealer.extend(g['machine_id'].tolist())
-                else:
-                    st.warning(f"Không tìm thấy cột {DEALER_COL_NAME} để phân nhóm.")
+            with st.expander(f"🏢 Chọn nhanh theo {DEALER_COL_NAME.upper()}", expanded=False):
+                groups = df_display.groupby(DEALER_COL_NAME)
+                c_dealer = st.columns(3)
+                for i, (dealer, g) in enumerate(groups):
+                    if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"ctrl_grp_{dealer}"):
+                        selected_by_logic.extend(g['machine_id'].tolist())
 
         with col_select2:
-            with st.expander("🚨 Lọc Rủi ro"):
-                risk_targets = df_d[df_d['monitor_state'].isin(['🔴 Offline', '⚫ Dead'])]
+            with st.expander("🚨 Lọc Rủi ro", expanded=False):
+                # FIX LỖI: Lọc dựa trên df_display đã được map trạng thái
+                risk_targets = df_display[df_display['monitor_state'].isin(['🔴 Offline', '⚫ Dead'])]
                 st.write(f"Tìm thấy: **{len(risk_targets)}** máy rủi ro")
-                btn_risk = st.button("🚨 Chọn tất cả máy Rủi ro", use_container_width=True)
-                if btn_risk:
-                    selected_by_dealer.extend(risk_targets['machine_id'].tolist())
+                if st.button("🚨 Chọn tất cả máy Rủi ro", use_container_width=True):
+                    selected_by_logic.extend(risk_targets['machine_id'].tolist())
 
-        # --- 3. DATA EDITOR (BẢNG CHỈNH SỬA TRỰC TIẾP) ---
+        # --- 3. DATA EDITOR ---
         st.write("---")
-        st.markdown("**Danh sách thiết bị chi tiết:**")
-        
-        # Tự động tích chọn nếu đã chọn theo Dealer hoặc Risk
-        if selected_by_dealer:
-            df_ctrl.loc[df_ctrl['machine_id'].isin(selected_by_dealer), 'select'] = True
+        # Tự động tích chọn nếu logic trên được kích hoạt
+        if selected_by_logic:
+            df_display.loc[df_display['machine_id'].isin(selected_by_logic), 'select'] = True
+
+        # Rà soát tên cột: Tôi dùng 'username' vì thường sếp đặt tên này trong DB
+        # Nếu DB sếp vẫn là 'User' thì sếp sửa lại nhé
+        user_col = 'username' if 'username' in df_display.columns else df_display.columns[1]
 
         edited = st.data_editor(
-            df_ctrl[['select', 'User', 'machine_id', 'monitor_state', 'status']],
+            df_display[['select', user_col, 'machine_id', 'monitor_state', 'status']],
             column_config={
                 "select": st.column_config.CheckboxColumn("Chọn", help="Tích để gửi lệnh"),
-                "User": "Người dùng",
+                user_col: "Người dùng",
                 "machine_id": "Mã Máy",
-                "monitor_state": "Trạng thái",
+                "monitor_state": "Kết nối",
                 "status": "Trạng thái khóa"
             },
-            disabled=['User', 'machine_id', 'monitor_state', 'status'],
+            disabled=[user_col, 'machine_id', 'monitor_state', 'status'],
             hide_index=True,
             use_container_width=True,
-            key="ctrl_editor"
+            key="ctrl_editor_v3"
         )
 
-        # --- 4. KHU VỰC THỰC THI LỆNH (ACTION BAR) ---
+        # --- 4. ACTION BAR ---
         targets = edited[edited['select']]['machine_id'].tolist()
         
         if targets:
-            st.markdown(f"### ⚡ Thực thi với **{len(targets)}** máy đã chọn")
+            st.markdown(f"### ⚡ Thực thi với **{len(targets)}** máy")
             c1, c2, c3 = st.columns([1, 1, 2])
             
             with c1:
                 if st.button("🔒 KHÓA MÁY", type="primary", use_container_width=True):
-                    cmds = [{"machine_id": m, "command": "LOCK"} for m in targets]
+                    cmds = [{"machine_id": m, "command": "LOCK", "is_executed": False} for m in targets]
                     sb.table("commands").insert(cmds).execute()
-                    st.success(f"Đã phát lệnh KHÓA tới {len(targets)} máy")
+                    st.success(f"Đã phát lệnh KHÓA")
                     time.sleep(1)
                     st.rerun()
             
             with c2:
                 if st.button("🔓 MỞ KHÓA", use_container_width=True):
-                    cmds = [{"machine_id": m, "command": "UNLOCK"} for m in targets]
+                    cmds = [{"machine_id": m, "command": "UNLOCK", "is_executed": False} for m in targets]
                     sb.table("commands").insert(cmds).execute()
-                    st.success(f"Đã phát lệnh MỞ tới {len(targets)} máy")
+                    st.success(f"Đã phát lệnh MỞ")
                     time.sleep(1)
                     st.rerun()
             
             with c3:
-                st.info("💡 Lệnh sẽ được Agent thực hiện trong vòng 30 giây.")
+                st.info("💡 Lệnh sẽ được thực hiện khi Agent gửi nhịp tim kế tiếp.")
         else:
-            st.info("👆 Vui lòng chọn ít nhất một máy để thực hiện lệnh.")
+            st.info("👆 Tích chọn máy ở bảng trên để thực hiện lệnh.")
 
     else:
-        st.info("Không có dữ liệu thiết bị để điều khiển.")
+        st.warning("⚠️ Không có dữ liệu thiết bị. Vui lòng kiểm tra bảng 'devices'.")
 
 
 # ==========================================
