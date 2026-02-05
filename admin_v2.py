@@ -350,6 +350,11 @@ with t_mon:
         df_d = pd.DataFrame() # Đảm bảo không bị None
 
     if not df_hb.empty:
+        # DEBUG LINE (Sếp xóa sau khi xong)
+    with st.expander("🕵️ Debug Dữ liệu thô"):
+        st.write("Múi giờ hiện tại của App:", datetime.now(timezone.utc).tzinfo)
+        st.write("Dòng đầu tiên từ DB:", df_hb['received_at'].iloc[0])
+        st.write("Phút vắng mặt tính được:", df_hb['off_minutes'].iloc[0])
         # --- 2. XỬ LÝ THỜI GIAN & TRẠNG THÁI ---
         now_dt = datetime.now(timezone.utc)
         df_hb['received_at_dt'] = pd.to_datetime(df_hb['received_at'], utc=True)
