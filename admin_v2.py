@@ -1060,6 +1060,56 @@ with t_offline:
                 st.error(f"❌ Lỗi truy vết: {e}")
     else:
         st.warning("⚠️ Đang chờ đồng bộ danh sách thiết bị...")
+
+class AI_Engine_v3:
+    """Bộ não phân tích rủi ro và quản lý bộ nhớ AI"""
+    
+    @staticmethod
+    def calculate_features(df, now_dt):
+        """Tính toán các chỉ số thông minh từ 6000 thiết bị"""
+        total = len(df)
+        if total == 0:
+            return {"risk_score": 0, "risk_level": "Safe", "offline_ratio": 0}
+        
+        # 1. Tỉ lệ Offline
+        off_count = len(df[df['off_min'] > 15]) # Máy off trên 15p
+        off_ratio = off_count / total
+        
+        # 2. Tính toán Jitter (Độ nhiễu/ổn định của tín hiệu)
+        # Giả lập: Jitter cao khi có nhiều máy rớt mạng cùng lúc trong 1h qua
+        new_offline_1h = len(df[(df['off_min'] > 0) & (df['off_min'] <= 60)])
+        jitter = round(new_offline_1h / total * 10, 2)
+        
+        # 3. Tính toán Risk Score (0-100)
+        # Công thức: 60% tỉ lệ offline + 40% độ nhiễu hệ thống
+        risk_score = (off_ratio * 60) + (min(jitter/10, 1) * 40)
+        risk_score = min(max(risk_score, 0), 100)
+        
+        # 4. Phán quyết của AI
+        if risk_score > 60: risk_level = "Critical"
+        elif risk_score > 30: risk_level = "Warning"
+        else: risk_level = "Stable"
+        
+        return {
+            "total_devices": total,
+            "offline_ratio": off_ratio,
+            "new_offline_1h": new_offline_1h,
+            "heartbeat_jitter": jitter,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "created_at": now_dt.isoformat()
+        }
+
+    @staticmethod
+    def run_snapshot(sb, features):
+        """Lưu lại trạng thái hệ thống vào Supabase để AI học tập"""
+        try:
+            # Gửi dữ liệu vào bảng ai_snapshots
+            sb.table("ai_snapshots").insert(features).execute()
+            return True
+        except Exception as e:
+            print(f"Lỗi lưu Snapshot: {e}")
+            return False
 def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
     # --- 0. TÍNH TOÁN FEATURE DYNAMICS ---
     # Sử dụng Engine để tính toán các chỉ số Real-time từ df_ai (6000 máy)
