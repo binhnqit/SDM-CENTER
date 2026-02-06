@@ -1357,34 +1357,50 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
-    # --- BƯỚC CỨU NGUY: ĐỊNH NGHĨA df_ai_work ---
-    # Kiểm tra xem sếp đang dùng tên biến nào thì gán nó về df_ai_work
-    if 'df_final' in locals():
-        df_ai_work = df_final
-    elif 'df_ai_input' in locals():
-        df_ai_work = df_ai_input
-    elif 'df_inv' in locals():
-        df_ai_work = df_inv
-    else:
-        df_ai_work = None # Trường hợp xấu nhất là chưa có dữ liệu
+    # 1. Xác định nguồn dữ liệu (như bước trước)
+    df_ai_work = None
+    if 'df_all' in locals(): df_ai_work = df_all.copy()
+    elif 'df_final' in locals(): df_ai_work = df_final.copy()
+    elif 'df_inv' in locals(): df_ai_work = df_inv.copy()
 
     if df_ai_work is not None and not df_ai_work.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
-            
-            # Đảm bảo các cột cần thiết có chữ thường (tránh lỗi Case-sensitive)
             df_ai_work.columns = [c.lower().strip() for c in df_ai_work.columns]
 
-            # --- GỌI RENDER HUB VÀ DECISION ENGINE ---
+            # --- BƯỚC QUAN TRỌNG: TẠO CỘT OFF_MIN NẾU THIẾU ---
+            if 'off_min' not in df_ai_work.columns:
+                if 'last_seen' in df_ai_work.columns:
+                    # Tính toán dựa trên thời gian thực rớt mạng
+                    df_ai_work['ls_dt'] = pd.to_datetime(df_ai_work['last_seen'], utc=True, errors='coerce')
+                    df_ai_work['off_min'] = df_ai_work['ls_dt'].apply(
+                        lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
+                    )
+                else:
+                    # Nếu hoàn toàn không có dữ liệu thời gian, mặc định là 0 để không lỗi
+                    df_ai_work['off_min'] = 0
+
+            # --- ĐẢM BẢO CÁC CỘT ĐỊNH DANH ĐỂ KHÔNG HIỆN NONE ---
+            if 'customer_name' not in df_ai_work.columns:
+                df_ai_work['customer_name'] = "Đại lý chưa xác định"
+            if 'hostname' not in df_ai_work.columns:
+                df_ai_work['hostname'] = df_ai_work.get('machine_id', 'Unknown-Host')
+
+            # --- RENDER VÀ CHẠY DECISION ENGINE ---
             render_ai_strategic_hub_v3(df_ai_work, now_dt_aware, sb)
             
-            # Gọi Decision Engine sếp vừa nâng cấp
-            # (Phần code hiển thị Decisions sếp dán ở đây...)
+            # Phần Decision Engine của sếp
+            context = {"sales_weight": 1.2, "max_impact": 100, "is_peak_hour": True}
+            decisions = AI_Decision_Logic.generate_decisions(df_ai_work, context)
+            
+            # (Phần hiển thị Decision Cards...)
 
         except Exception as e:
-            st.error(f"❌ AI Engine bị nghẽn: {str(e)}")
+            st.error(f"❌ AI Engine bị nghẽn tại: {str(e)}")
+            # In ra danh sách cột thực tế để sếp dễ kiểm soát
+            st.write("Cột hiện có:", df_ai_work.columns.tolist())
     else:
-        st.info("📡 Đang chờ nạp dữ liệu định danh từ Inventory...")
+        st.info("📡 Đang kết nối dữ liệu 6,000 máy...")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
