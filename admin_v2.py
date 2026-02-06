@@ -85,7 +85,47 @@ def load_all_data():
 
 # Dòng này PHẢI nằm ngoài hàm (sát lề trái)
 df_inv, df_c, df_f = load_all_data() 
+# --- DATA ENGINE (Gộp hàm cũ và mới để tối ưu) ---
 
+@st.cache_data(ttl=300) 
+def get_unified_data():
+    try:
+        # Sử dụng sb (biến sếp đã tạo) thay vì supabase
+        # SELECT * lấy toàn bộ info từ Excel, và lấy thêm status, machine_id từ bảng devices
+        response = sb.table("device_inventory").select("*, devices(status, last_seen, machine_id)").execute()
+        
+        if not response.data:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(response.data)
+        
+        # Xử lý dữ liệu lồng nhau (Flatten nested JSON từ Supabase)
+        # Vì devices là bảng phụ nên nó sẽ chui vào một cột dạng list/dict
+        def extract_status(row):
+            if isinstance(row, list) and len(row) > 0:
+                return row[0].get('status', 'offline')
+            return 'offline'
+        
+        def extract_last_seen(row):
+            if isinstance(row, list) and len(row) > 0:
+                return row[0].get('last_seen', None)
+            return None
+
+        if 'devices' in df.columns:
+            df['online_status'] = df['devices'].apply(extract_status)
+            df['last_seen_agent'] = df['devices'].apply(extract_last_seen)
+        
+        return df
+    except Exception as e:
+        st.error(f"Lỗi kết nối dữ liệu: {e}")
+        return pd.DataFrame()
+
+# --- GỌI DỮ LIỆU ---
+# Sếp nên gọi hàm này thay cho load_all_data cũ ở các phần liên quan đến giám sát
+df_all = get_unified_data()
+
+# Lấy dữ liệu lệnh và file để dùng cho các Tab khác (vẫn giữ logic cũ của sếp)
+_, df_c, df_f = load_all_data()
 # --- THIẾT LẬP SCHEMA PHÒNG THỦ NGAY SAU KHI LOAD ---
 if not df_inv.empty:
     if DEALER_COL_NAME not in df_inv.columns:
