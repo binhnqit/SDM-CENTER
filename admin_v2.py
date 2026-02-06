@@ -133,7 +133,9 @@ t_mon, t_ctrl, t_file, t_csv, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs(
     "🕵️ TRUY VẾT",
     "🧠 AI INSIGHT",
     "🔑 QUẢN LÝ TOKEN",
-    "⚙️ HỆ THỐNG"
+    "⚙️ HỆ THỐNG",
+    "📖 HD SỬ DỤNG",
+    "🛠️ HD CÀI ĐẶT"
 ])
 
 # --- [CORE LOGIC] ARCHITECTURE & HIERARCHY ---
