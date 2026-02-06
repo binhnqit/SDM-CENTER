@@ -1220,40 +1220,42 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
+    # 1. Lấy dữ liệu danh mục máy (đã tải ở đầu app)
+    # Giả định df_inv là dữ liệu từ bảng device_inventory sếp đã load
     if not df_inv.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
-            # Tạo bản build sạch
-            df_real = df_inv.copy()
+            
+            # 2. CHUẨN HÓA DỮ LIỆU ĐẦU VÀO CHO AI
+            # Chúng ta copy df_inv để làm gốc, vì nó chứa đầy đủ tên Đại lý và Hostname
+            df_ai_input = df_inv.copy()
 
-            # --- SMART MAPPING: Tự động tìm cột thực ---
-            # 1. Tìm cột Hostname
-            h_col = next((c for c in df_real.columns if any(k in c.lower() for k in ['host', 'máy', 'machine'])), df_real.columns[0])
-            df_real['hostname'] = df_real[h_col].fillna("Unknown Host")
-
-            # 2. Tìm cột Đại lý
-            d_col = next((c for c in df_real.columns if any(k in c.lower() for k in ['đại lý', 'customer', 'khách', 'agency'])), None)
-            df_real['customer_name'] = df_real[d_col].fillna("N/A") if d_col else "Chưa định danh"
-
-            # 3. Tính phút Offline thực tế
-            if 'last_seen' in df_real.columns:
-                df_real['ls_dt'] = pd.to_datetime(df_real[ 'last_seen'], utc=True)
-                df_real['off_min'] = df_real['ls_dt'].apply(
+            # 3. TÍNH TOÁN PHÚT OFFLINE THỰC TẾ
+            # Khớp thời gian từ cột 'last_seen' để biết máy nào thực sự đang chết
+            if 'last_seen' in df_ai_input.columns:
+                df_ai_input['ls_dt'] = pd.to_datetime(df_ai_input['last_seen'], utc=True)
+                df_ai_input['off_min'] = df_ai_input['ls_dt'].apply(
                     lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
                 )
             else:
-                df_real['off_min'] = 0
+                df_ai_input['off_min'] = 9999
 
-            # --- GỌI RENDER HUB VỚI DỮ LIỆU ĐÃ LÀM SẠCH ---
-            render_ai_strategic_hub_v3(df_real, now_dt_aware, sb)
+            # 4. KHỚP TÊN CỘT ĐỂ HIỂN THỊ (Mapping lại cho đúng hàm Render)
+            # Dò tìm và ép tên cột từ df_inv vào đúng label mà AI Hub yêu cầu
+            h_col = next((c for c in df_ai_input.columns if any(k in c.lower() for k in ['hostname', 'tên máy', 'máy'])), 'hostname')
+            d_col = next((c for c in df_ai_input.columns if any(k in c.lower() for k in ['đại lý', 'customer', 'khách', 'agency'])), 'customer_name')
+            
+            df_ai_input['hostname'] = df_ai_input[h_col]
+            df_ai_input['customer_name'] = df_ai_input[d_col]
 
-            # --- SỬA LỖI DUPLICATE KHI IMPORT (Nếu sếp có nút Import ở đây) ---
-            # Luôn nhắc sếp: Dùng sb.table(...).upsert(...) thay vì .insert(...)
+            # 5. RENDER CHIẾN LƯỢC
+            # Lúc này df_ai_input đã có: hostname thật, customer_name thật và off_min thật
+            render_ai_strategic_hub_v3(df_ai_input, now_dt_aware, sb)
 
         except Exception as e:
-            st.error(f"❌ AI Hub Critical Error: {e}")
+            st.error(f"❌ Lỗi đồng bộ AI Hub: {e}")
     else:
-        st.info("📡 Hệ thống đang chờ tín hiệu từ 6,000 Agents...")
+        st.warning("📡 Chưa tìm thấy dữ liệu định danh trong bảng device_inventory.")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
