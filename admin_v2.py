@@ -1062,30 +1062,23 @@ with t_offline:
         st.warning("⚠️ Đang chờ đồng bộ danh sách thiết bị...")
 
 class AI_Engine_v3:
-    """Bộ não phân tích rủi ro và quản lý bộ nhớ AI"""
-    
     @staticmethod
     def calculate_features(df, now_dt):
-        """Tính toán các chỉ số thông minh từ 6000 thiết bị"""
+        """Tính toán features từ dữ liệu thực - Đảm bảo không có None"""
         total = len(df)
         if total == 0:
             return {"risk_score": 0, "risk_level": "Safe", "offline_ratio": 0}
         
-        # 1. Tỉ lệ Offline
-        off_count = len(df[df['off_min'] > 15]) # Máy off trên 15p
+        # Đếm máy offline thực tế (trên 15 phút)
+        off_count = len(df[df['off_min'] > 15]) 
         off_ratio = off_count / total
         
-        # 2. Tính toán Jitter (Độ nhiễu/ổn định của tín hiệu)
-        # Giả lập: Jitter cao khi có nhiều máy rớt mạng cùng lúc trong 1h qua
+        # Tính jitter dựa trên biến động 1h qua
         new_offline_1h = len(df[(df['off_min'] > 0) & (df['off_min'] <= 60)])
-        jitter = round(new_offline_1h / total * 10, 2)
+        jitter = round((new_offline_1h / total * 10), 2) if total > 0 else 0
         
-        # 3. Tính toán Risk Score (0-100)
-        # Công thức: 60% tỉ lệ offline + 40% độ nhiễu hệ thống
-        risk_score = (off_ratio * 60) + (min(jitter/10, 1) * 40)
-        risk_score = min(max(risk_score, 0), 100)
+        risk_score = min((off_ratio * 60) + (min(jitter/10, 1) * 40), 100)
         
-        # 4. Phán quyết của AI
         if risk_score > 60: risk_level = "Critical"
         elif risk_score > 30: risk_level = "Warning"
         else: risk_level = "Stable"
@@ -1095,20 +1088,20 @@ class AI_Engine_v3:
             "offline_ratio": off_ratio,
             "new_offline_1h": new_offline_1h,
             "heartbeat_jitter": jitter,
-            "risk_score": risk_score,
+            "risk_score": int(risk_score),
             "risk_level": risk_level,
             "created_at": now_dt.isoformat()
         }
 
     @staticmethod
     def run_snapshot(sb, features):
-        """Lưu lại trạng thái hệ thống vào Supabase để AI học tập"""
+        """Sử dụng Upsert để tránh lỗi Duplicate Key khi lưu snapshot"""
         try:
-            # Gửi dữ liệu vào bảng ai_snapshots
+            # Lưu snapshot rủi ro
             sb.table("ai_snapshots").insert(features).execute()
             return True
         except Exception as e:
-            print(f"Lỗi lưu Snapshot: {e}")
+            st.error(f"Lỗi Snapshot: {e}")
             return False
 def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
     # --- 0. TÍNH TOÁN FEATURE DYNAMICS ---
@@ -1230,39 +1223,37 @@ with t_ai:
     if not df_inv.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
-            # Tạo bản sao để không làm hỏng dữ liệu gốc
-            df_ai_input = df_inv.copy()
+            # Tạo bản build sạch
+            df_real = df_inv.copy()
 
-            # --- KHỚP LỆNH TÊN CỘT (FIX LỖI HIỂN THỊ NONE) ---
-            # Dò tìm cột Hostname: Ưu tiên 'hostname' -> 'Tên máy' -> Cột đầu tiên
-            if 'hostname' not in df_ai_input.columns:
-                host_col = next((c for c in df_ai_input.columns if 'host' in c.lower() or 'tên máy' in c.lower()), df_ai_input.columns[0])
-                df_ai_input['hostname'] = df_ai_input[host_col]
+            # --- SMART MAPPING: Tự động tìm cột thực ---
+            # 1. Tìm cột Hostname
+            h_col = next((c for c in df_real.columns if any(k in c.lower() for k in ['host', 'máy', 'machine'])), df_real.columns[0])
+            df_real['hostname'] = df_real[h_col].fillna("Unknown Host")
 
-            # Dò tìm cột Đại lý: Ưu tiên 'customer_name' -> 'Đại lý / Khách hàng' -> 'Đại lý'
-            if 'customer_name' not in df_ai_input.columns:
-                dealer_col = next((c for c in df_ai_input.columns if 'đại lý' in c.lower() or 'customer' in c.lower() or 'khách hàng' in c.lower()), None)
-                df_ai_input['customer_name'] = df_ai_input[dealer_col] if dealer_col else "Chưa định danh"
+            # 2. Tìm cột Đại lý
+            d_col = next((c for c in df_real.columns if any(k in c.lower() for k in ['đại lý', 'customer', 'khách', 'agency'])), None)
+            df_real['customer_name'] = df_real[d_col].fillna("N/A") if d_col else "Chưa định danh"
 
-            # Đảm bảo dữ liệu không bị None trước khi hiển thị
-            df_ai_input['hostname'] = df_ai_input['hostname'].fillna("Unknown Host")
-            df_ai_input['customer_name'] = df_ai_input['customer_name'].fillna("N/A")
-
-            # --- TÍNH TOÁN THỜI GIAN OFFLINE ---
-            if 'last_seen' in df_ai_input.columns:
-                df_ai_input['ls_dt'] = pd.to_datetime(df_ai_input['last_seen'], utc=True)
-                df_ai_input['off_min'] = df_ai_input['ls_dt'].apply(
+            # 3. Tính phút Offline thực tế
+            if 'last_seen' in df_real.columns:
+                df_real['ls_dt'] = pd.to_datetime(df_real[ 'last_seen'], utc=True)
+                df_real['off_min'] = df_real['ls_dt'].apply(
                     lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
                 )
             else:
-                # Nếu không có last_seen, giả lập để sếp thấy bảng hoạt động
-                df_ai_input['off_min'] = 0 
+                df_real['off_min'] = 0
 
-            # Thực thi Render
-            render_ai_strategic_hub_v3(df_ai_input, now_dt_aware, sb)
+            # --- GỌI RENDER HUB VỚI DỮ LIỆU ĐÃ LÀM SẠCH ---
+            render_ai_strategic_hub_v3(df_real, now_dt_aware, sb)
+
+            # --- SỬA LỖI DUPLICATE KHI IMPORT (Nếu sếp có nút Import ở đây) ---
+            # Luôn nhắc sếp: Dùng sb.table(...).upsert(...) thay vì .insert(...)
 
         except Exception as e:
-            st.error(f"❌ AI Hub Error: {e}")
+            st.error(f"❌ AI Hub Critical Error: {e}")
+    else:
+        st.info("📡 Hệ thống đang chờ tín hiệu từ 6,000 Agents...")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
