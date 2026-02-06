@@ -126,6 +126,27 @@ df_all = get_unified_data()
 
 # Lấy dữ liệu lệnh và file để dùng cho các Tab khác (vẫn giữ logic cũ của sếp)
 _, df_c, df_f = load_all_data()
+# --- SIDEBAR FILTERS ---
+st.sidebar.markdown(f"**Hệ thống:** {AGENT_VERSION}")
+st.sidebar.header("🎯 BỘ LỌC CHIẾN LƯỢC")
+
+if not df_all.empty:
+    # Lọc Tỉnh thành
+    provinces = sorted([x for x in df_all['province'].unique() if x])
+    sel_provinces = st.sidebar.multiselect("📍 Chọn Tỉnh thành", provinces)
+    
+    # Lọc Đại lý
+    dealers = sorted([x for x in df_all['customer_name'].unique() if x])
+    sel_dealers = st.sidebar.multiselect("🏬 Chọn Đại lý", dealers)
+    
+    # Áp dụng bộ lọc
+    df_filtered = df_all.copy()
+    if sel_provinces:
+        df_filtered = df_filtered[df_filtered['province'].isin(sel_provinces)]
+    if sel_dealers:
+        df_filtered = df_filtered[df_filtered['customer_name'].isin(sel_dealers)]
+else:
+    df_filtered = df_all
 # --- THIẾT LẬP SCHEMA PHÒNG THỦ NGAY SAU KHI LOAD ---
 if not df_inv.empty:
     if DEALER_COL_NAME not in df_inv.columns:
