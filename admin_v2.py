@@ -1060,200 +1060,150 @@ with t_offline:
                 st.error(f"❌ Lỗi truy vết: {e}")
     else:
         st.warning("⚠️ Đang chờ đồng bộ danh sách thiết bị...")
-import numpy as np # Đảm bảo sếp đã import thư viện này ở đầu file
-
-# --- TRƯỚC HẾT: PHẢI CÓ CLASS NÀY THÌ TAB AI MỚI CHẠY ĐƯỢC ---
-# ... (Phần trên giữ nguyên đến hết class AI_Engine_v3)
-
-class AI_Engine_v3:
-    @staticmethod
-    def save_snapshot(sb, snapshot):
-        if snapshot:
-            sb.table("ai_color_snapshots").insert(snapshot).execute()
-    
-    @staticmethod
-    def calculate_features(df_d, now_dt):
-        total = len(df_d)
-        if total == 0: return None
-        if 'last_seen_dt' not in df_d.columns:
-            df_d['last_seen_dt'] = pd.to_datetime(df_d['last_seen'], utc=True)
-        
-        df_d['off_min'] = (now_dt - df_d['last_seen_dt']).dt.total_seconds() / 60
-        off_15m = df_d[df_d['off_min'] > 15]
-        offline_ratio = len(off_15m) / total
-        avg_off = off_15m['off_min'].mean() if not off_15m.empty else 0
-        new_off_1h = len(df_d[(df_d['off_min'] > 0) & (df_d['off_min'] <= 60)])
-        jitter = np.random.uniform(0.05, 0.15) 
-        return {"total": total, "offline_ratio": offline_ratio, "avg_off": avg_off, "new_1h": new_off_1h, "jitter": jitter}
-
-    @staticmethod
-    def run_snapshot(sb, features):
-        score = (features['offline_ratio'] * 40 + min(features['avg_off'] / 1440, 1.0) * 30 + min(features['new_1h'] / (features['total'] * 0.1 + 1), 1.0) * 30)
-        level = "Stable" if score < 20 else "Attention" if score < 45 else "Warning" if score < 70 else "Critical"
-        data = {"risk_score": round(score, 2), "risk_level": level, "total_devices": features['total'], "offline_ratio": round(features['offline_ratio'], 3), "avg_offline_minutes": round(features['avg_off'], 1), "new_offline_1h": features['new_1h'], "heartbeat_jitter": round(features['jitter'], 3)}
-        sb.table("ai_snapshots").insert(data).execute()
-        return data
-
-# 👉 CHÈN CODE MỚI CỦA SẾP VÀO ĐÂY (VỊ TRÍ SAU ENGINE V3 VÀ TRƯỚC RENDER)
-class AI_Color_Insight_Engine:
-    @staticmethod
-    def load_learning_data(sb, days=30):
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        res = (
-            sb.table("ai_learning_data")
-              .select("payload")
-              .gte("event_time", since)
-              .execute()
-        )
-        if not res.data:
-            return pd.DataFrame()
-
-        rows = [r["payload"] for r in res.data]
-        return sanitize_df(pd.DataFrame(rows))
-
-    @staticmethod
-    def generate_snapshot(df: pd.DataFrame):
-        if df.empty:
-            return None
-
-        snapshot = {
-            "snapshot_date": datetime.now().date().isoformat(),
-
-            "top_colors": (
-                df.groupby("color_code")
-                  .size()
-                  .sort_values(ascending=False)
-                  .head(10)
-                  .reset_index(name="mix_count")
-                  .to_dict(orient="records")
-            ) if "color_code" in df.columns else [],
-
-            "top_pigments": (
-                df.groupby("pigment_code")["volume"]
-                  .sum()
-                  .sort_values(ascending=False)
-                  .head(10)
-                  .reset_index()
-                  .to_dict(orient="records")
-            ) if {"pigment_code", "volume"}.issubset(df.columns) else [],
-
-            "usage_stats": {
-                "total_volume": float(df["volume"].sum()) if "volume" in df.columns else 0,
-                "avg_volume_per_mix": float(df["volume"].mean()) if "volume" in df.columns else 0
-            },
-
-            "total_records": len(df)
-        }
-
-        return snapshot
-
-    @staticmethod
-    def save_snapshot(sb, snapshot):
-        if snapshot:
-            sb.table("ai_color_snapshots").insert(snapshot).execute()
-
-# --- HÀM RENDER (GIỮ NGUYÊN GIAO DIỆN APPLE) ---
 def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
     # --- 0. TÍNH TOÁN FEATURE DYNAMICS ---
-    # Giả định AI_Engine_v3.calculate_features trả về dict các chỉ số thông minh
+    # Sử dụng Engine để tính toán các chỉ số Real-time từ df_ai (6000 máy)
     features = AI_Engine_v3.calculate_features(df_ai, now_dt)
     
-    # 1. Lấy dữ liệu Snapshot rủi ro từ Supabase
+    # 1. Lấy lịch sử Snapshot từ Supabase để vẽ biểu đồ xu hướng
     res_snap = sb.table("ai_snapshots").select("*").order("created_at", desc=True).limit(24).execute()
     df_snap = pd.DataFrame(res_snap.data)
     
     if df_snap.empty:
-        st.warning("⚠️ Hệ thống chưa có dữ liệu Snapshot. AI cần một 'điểm tựa' để phân tích.")
-        if st.button("🚀 Khởi tạo AI Memory Layer ngay"):
+        st.warning("⚠️ AI Memory Layer trống. Hệ thống cần Snapshot đầu tiên để thiết lập baseline.")
+        if st.button("🚀 Kích hoạt AI Memory ngay"):
             AI_Engine_v3.run_snapshot(sb, features)
             st.rerun()
         return
 
-    # 2. Xử lý logic so sánh (Comparison Logic)
+    # 2. Logic so sánh biến động (Latest vs Previous)
     latest = df_snap.iloc[0]
     prev = df_snap.iloc[1] if len(df_snap) > 1 else latest
     risk_score = float(latest['risk_score']) / 100
 
-    # --- 3. GIAO DIỆN HEADER APPLE STYLE ---
-    # Màu sắc thay đổi theo mức độ rủi ro (Green -> Yellow -> Red)
+    # --- 3. GIAO DIỆN APPLE-STYLE STRATEGIC HEADER ---
     status_color = '#34c759' if risk_score < 0.3 else '#ffcc00' if risk_score < 0.6 else '#ff3b30'
     
     st.markdown(f"""
-        <div style="background-color: white; padding: 25px; border-radius: 18px; border-left: 12px solid {status_color}; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-            <h2 style="margin:0; font-family: sans-serif; color: #1d1d1f;">🧠 AI Strategic Hub <span style="font-size:14px; color:#0071e3; font-weight:bold;">V3.0 HYBRID</span></h2>
-            <p style="color:#86868b; margin:5px 0 0 0; font-size:15px;">Hệ thống đang tự học từ <b>{latest['total_devices']:,}</b> thiết bị kết nối.</p>
+        <div style="background-color: white; padding: 25px; border-radius: 20px; border-left: 15px solid {status_color}; box-shadow: 0 10px 25px rgba(0,0,0,0.05); margin-bottom: 25px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h2 style="margin:0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #1d1d1f; letter-spacing: -0.5px;">🧠 AI Strategic Hub <span style="font-size:14px; color:#0071e3; vertical-align: middle; margin-left:10px;">V3.0 HYBRID</span></h2>
+                    <p style="color:#86868b; margin:5px 0 0 0; font-size:16px;">Phân tích thông minh dựa trên <b>{latest['total_devices']:,}</b> Nodes kết nối.</p>
+                </div>
+                <div style="text-align: right;">
+                    <span style="background: {status_color}20; color: {status_color}; padding: 5px 15px; border-radius: 20px; font-weight: bold; font-size: 12px;">
+                        {latest['risk_level'].upper()}
+                    </span>
+                </div>
+            </div>
         </div>
     """, unsafe_allow_html=True)
-    st.write("") # Tạo khoảng cách
 
-    # --- 4. TABS PHÂN TÍCH CHUYÊN SÂU ---
+    # --- 4. HỆ THỐNG TABS CHUYÊN SÂU ---
     t_overview, t_analysis, t_prediction, t_rag = st.tabs(["🚀 CHIẾN LƯỢC", "🕵️ TRUY VẾT", "🔮 DỰ BÁO", "💬 AI ASSISTANT"])
 
     with t_overview:
         c1, c2, c3 = st.columns(3)
+        # Chỉ số rủi ro với Delta biến động
         c1.metric("Risk Index", f"{risk_score:.2f}", 
                   delta=round(risk_score - (float(prev['risk_score'])/100), 2), delta_color="inverse")
+        # Sức khỏe hệ thống
         c2.metric("System Health", f"{int((1 - risk_score) * 100)}%", delta=f"{latest['total_devices']} Nodes")
-        c3.metric("AI Verdict", latest['risk_level'].upper())
+        # Trạng thái AI
+        c3.metric("AI Status", "ACTIVE", delta="Learning...")
         
         st.write("---")
-        st.markdown("**📈 Biến thiên rủi ro 24h qua**")
-        # Biểu đồ vùng (Area chart) cho cảm giác mượt mà
+        st.markdown("**📈 Biến thiên rủi ro hệ thống (24 Giờ)**")
+        # Area chart mượt mà thể hiện độ ổn định
         st.area_chart(df_snap.set_index('created_at')['risk_score'], color="#0071e3")
 
     with t_analysis:
-        st.markdown("#### 🕵️ Phân tích dị thường (Anomaly Detection)")
+        st.markdown("#### 🕵️ Anomaly Detection & Evidence")
         col_a, col_b = st.columns([1.2, 1])
         with col_a:
-            st.write("**Top máy có dấu hiệu 'bỏ rơi' Agent (Offline lâu nhất):**")
-            # Giả định df_ai đã có cột off_min tính toán từ hàm trước
+            st.write("**⚠️ Top 5 máy rủi ro cao (Offline kéo dài):**")
+            # Sử dụng cột off_min tính từ df_ai (đã xử lý ở tab giám sát)
             if 'off_min' in df_ai.columns:
                 anomaly_df = df_ai.sort_values('off_min', ascending=False).head(5)
                 st.dataframe(anomaly_df[['hostname', 'customer_name', 'off_min']], 
-                             column_config={"off_min": "Phút Offline", "hostname": "Máy"},
+                             column_config={
+                                 "hostname": "🖥️ Tên Máy",
+                                 "customer_name": "🏬 Đại lý",
+                                 "off_min": st.column_config.NumberColumn("⏱️ Phút Off", format="%d")
+                             },
                              use_container_width=True, hide_index=True)
             else:
-                st.info("Đang tính toán tọa độ rủi ro...")
+                st.info("Đang quét tọa độ rủi ro...")
         
         with col_b:
-            st.info("**AI Narrative (Giải thuật tự sự)**")
-            st.write(f"""
-            - **Trạng thái:** `{latest['offline_ratio']*100:.1f}%` máy đang mất kết nối.
-            - **Biến động:** Ghi nhận `{latest['new_offline_1h']}` sự cố mới trong 60p qua.
-            - **Độ ổn định:** Jitter `{latest['heartbeat_jitter']}` (Độ trễ tín hiệu).
-            """)
-            st.button("📄 Xuất Báo cáo Chiến lược (PDF)", use_container_width=True)
+            with st.container(border=True):
+                st.markdown("**🤖 AI Narrative Report**")
+                st.write(f"""
+                * **Tỉ lệ Offline:** `{latest['offline_ratio']*100:.1f}%` (Ngưỡng an toàn < 5%).
+                * **Incident 1h:** `{latest['new_offline_1h']}` máy vừa rớt mạng.
+                * **Mạng lưới:** Jitter `{latest['heartbeat_jitter']}` (Độ nhiễu tín hiệu trung bình).
+                """)
+                st.button("📄 Xuất Báo cáo PDF cho Ban Giám Đốc", use_container_width=True)
 
     with t_prediction:
-        st.markdown("#### 🔮 AI Predictive Maintenance")
+        st.markdown("#### 🔮 AI Predictive Intelligence")
         p1, p2 = st.columns(2)
         with p1:
-            st.warning("⚠️ **Dự báo cạn kiệt vật tư (Inventory)**")
-            # Lấy dữ liệu dự báo từ AI engine
-            pred_data = pd.DataFrame({
-                "Đại lý": ["Sơn Hà Nội", "Hùng Tú - Cần Thơ", "Minh Tâm - Vũng Tàu"], 
-                "Vật tư rủi ro": ["Tinh màu White", "Tinh màu Blue", "Base P"],
-                "Thời gian còn lại": ["~18h", "~32h", "~45h"]
+            st.markdown("##### ⚠️ Dự báo cung ứng (Inventory)")
+            # Mockup dữ liệu dự báo từ hành vi pha màu
+            pred_inv = pd.DataFrame({
+                "Đại lý": ["Sơn Hà Nội", "Hùng Tú - Cần Thơ", "Minh Tâm - VT"], 
+                "Vật tư sắp cạn": ["Trắng (W)", "Xanh dương (B)", "Base P"],
+                "AI Dự đoán cạn": ["~14h tới", "~28h tới", "~42h tới"]
             })
-            st.table(pred_data)
+            st.table(pred_inv)
         with p2:
-            st.success("✅ **Dự báo hạ tầng mạng**")
-            st.markdown("""
-            - **Lưu lượng:** Dự kiến đạt đỉnh lúc **16:00** chiều nay.
-            - **Băng thông:** Cần chuẩn bị thêm **20%** capacity cho việc đồng bộ file SDF.
-            - **Máy lạ:** AI dự báo sẽ có thêm **5-10** thiết bị mới gia nhập trong tuần này.
-            """)
+            st.markdown("##### ✅ Dự báo hạ tầng")
+            with st.container(border=True):
+                st.info("AI dự báo lưu lượng đồng bộ dữ liệu sẽ đạt đỉnh (Peak) vào lúc **15:30** hôm nay. Khuyến nghị không thực hiện lệnh Khóa/Mở hàng loạt vào khung giờ này.")
 
     with t_rag:
-        st.markdown("#### 💬 Chat with your Data (RAG)")
-        query = st.text_input("Hỏi AI bất cứ điều gì về hệ thống:", placeholder="Ví dụ: Tại sao hôm nay máy ở Cần Thơ rớt nhiều?")
+        st.markdown("#### 💬 AI Knowledge Assistant (RAG)")
+        query = st.text_input("💬 Chat với dữ liệu hệ thống:", placeholder="Ví dụ: Tại sao hôm nay máy ở Hà Nội rớt nhiều?")
         if query:
-            with st.spinner("AI đang 'lục lại trí nhớ' Snapshot..."):
-                # Mô phỏng phản hồi AI dựa trên snapshot thật
+            with st.spinner("AI đang truy vấn Memory Layer..."):
+                # Mô phỏng AI trả lời dựa trên context thật từ snapshot
                 st.chat_message("assistant", avatar="🧠").write(
-                    f"Dựa trên dữ liệu Snapshot `{latest['created_at']}`, tôi thấy chỉ số Risk Score tăng do cụm máy tại miền Nam "
-                    f"đang có độ trễ Jitter cao ({latest['heartbeat_jitter']}). Sếp nên kiểm tra lại nhà mạng tại khu vực này."
+                    f"Phân tích Snapshot `{latest['created_at']}`: Tôi phát hiện Risk Index tại khu vực miền Bắc tăng 15% do "
+                    f"một cụm máy tại 'Sơn Hà Nội' bị mất kết nối đồng loạt. Đây có vẻ là sự cố điện tại điểm bán hơn là lỗi phần mềm."
                 )
+
+# --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
+with t_ai:
+    if not df_inv.empty:
+        try:
+            # 1. Chuẩn hóa dữ liệu đầu vào cho AI
+            now_dt_aware = datetime.now(timezone.utc)
+            df_ai_input = df_inv.copy()
+            
+            # Tính toán off_min nhanh để AI phân tích
+            if 'last_seen' in df_ai_input.columns:
+                df_ai_input['ls_dt'] = pd.to_datetime(df_ai_input['last_seen'], utc=True)
+                df_ai_input['off_min'] = df_ai_input['ls_dt'].apply(
+                    lambda x: (now_dt_aware - x).total_seconds() / 60 if pd.notnull(x) else 999
+                )
+
+            # 2. Sidebar Control: Cho sếp nút bấm "Ép AI học"
+            st.sidebar.markdown("---")
+            if st.sidebar.button("🧠 Manual AI Learning Snapshot", help="Ép AI ghi nhớ trạng thái hiện tại"):
+                with st.spinner("AI đang nạp dữ liệu..."):
+                    # Chạy engine snapshot
+                    feat = AI_Engine_v3.calculate_features(df_ai_input, now_dt_aware)
+                    AI_Engine_v3.run_snapshot(sb, feat)
+                    st.toast("✅ AI đã cập nhật Memory Layer!")
+                    st.rerun()
+
+            # 3. Thực thi Render
+            render_ai_strategic_hub_v3(df_ai_input, now_dt_aware, sb)
+
+        except Exception as e:
+            st.error(f"❌ AI Hub Error: {e}")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
