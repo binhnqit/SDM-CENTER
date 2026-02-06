@@ -434,130 +434,95 @@ with t_tokens:
             st.success(f"Đã cấp Token cho {new_owner}")
 
 with t_mon:
-    # --- 0. CẤU HÌNH BIẾN ---
-    dealer_col = DEALER_COL_NAME
-
+    # --- 1. SỬ DỤNG DỮ LIỆU ĐÃ ĐƯỢC GỘP (df_filtered từ Sidebar) ---
     st.header("🖥️ Device Monitoring Center")
-    st.caption(f"Trạng thái thời gian thực từ hệ thống Agent {AGENT_VERSION}")
+    st.caption(f"Hồ sơ: {len(df_all)} máy | Đang lọc: {len(df_filtered)} máy | Hệ thống {AGENT_VERSION}")
     
-    # --- 1. LOAD DỮ LIỆU QUA RPC ---
-    try:
-        res = sb.rpc("latest_agent_heartbeats").execute()
-        df_mon = pd.DataFrame(res.data) 
-        
-        if not df_mon.empty:
-            if DEALER_COL_NAME not in df_mon.columns:
-                df_mon[DEALER_COL_NAME] = "Chưa phân loại"
-        else:
-            df_mon = pd.DataFrame(columns=[DEALER_COL_NAME, 'hostname', 'machine_id'])
-            
-    except Exception as e:
-        st.error(f"❌ Lỗi kết nối dữ liệu: {e}")
-        df_mon = pd.DataFrame(columns=[DEALER_COL_NAME, 'hostname', 'machine_id'])
+    if df_filtered.empty:
+        st.info("📡 Không tìm thấy thiết bị nào phù hợp với bộ lọc.")
+        st.stop()
 
-    # --- 2. KIỂM TRA DỮ LIỆU TRƯỚC KHI XỬ LÝ ---
-    if not df_mon.empty and 'received_at' in df_mon.columns:
-        # Xử lý thời gian chuẩn UTC
-        now_dt = datetime.now(timezone.utc)
-        df_mon['received_at_dt'] = pd.to_datetime(df_mon['received_at'], utc=True)
-        
-        # Tính phút vắng mặt
-        df_mon['off_minutes'] = (now_dt - df_mon['received_at_dt']).dt.total_seconds() / 60
-        df_mon['off_minutes'] = df_mon['off_minutes'].apply(lambda x: max(0, round(x, 1)))
+    # --- 2. XỬ LÝ TRẠNG THÁI (Sử dụng dữ liệu real-time lồng trong df_filtered) ---
+    # Lưu ý: Vì mình dùng Left Join, các cột kỹ thuật có thể nằm trong cột lồng nhau hoặc cột riêng
+    # Tôi giả định df_filtered đã có 'status' và 'last_seen' từ bảng devices
+    
+    now_dt = datetime.now(timezone.utc)
 
-        # --- 3. LOGIC TRẠNG THÁI & HIỂN THỊ ---
-        def resolve_state(mins):
-            if mins <= 3: return "🟢 Online"
-            if mins <= 10: return "🟡 Unstable"
-            if mins <= 30: return "🔴 Offline"
-            return "⚫ Dead"
+    def resolve_state(last_seen):
+        if pd.isna(last_seen): return "⚫ Dead"
+        ls_dt = pd.to_datetime(last_seen, utc=True)
+        mins = (now_dt - ls_dt).total_seconds() / 60
+        if mins <= 5: return "🟢 Online"
+        if mins <= 30: return "🟡 Unstable"
+        if mins <= 1440: return "🔴 Offline"
+        return "⚫ Dead"
 
-        df_mon['monitor_state'] = df_mon['off_minutes'].apply(resolve_state)
-        
-        df_mon['mode_display'] = df_mon['operational_state'].apply(
-            lambda x: "🔐 LOCKED" if x == "LOCKED" else "✅ READY"
-        )
+    df_filtered['monitor_state'] = df_filtered['last_seen'].apply(resolve_state)
 
-        # --- 4. DASHBOARD METRICS ---
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🟢 Online", len(df_mon[df_mon['monitor_state'] == "🟢 Online"]))
-        m2.metric("🟡 Unstable", len(df_mon[df_mon['monitor_state'] == "🟡 Unstable"]))
-        m3.metric("🔴 Offline", len(df_mon[df_mon['monitor_state'] == "🔴 Offline"]))
-        m4.metric("⚫ Dead", len(df_mon[df_mon['monitor_state'] == "⚫ Dead"]))
+    # --- 3. DASHBOARD METRICS ---
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🟢 Online", len(df_filtered[df_filtered['monitor_state'] == "🟢 Online"]))
+    m2.metric("🟡 Unstable", len(df_filtered[df_filtered['monitor_state'] == "🟡 Unstable"]))
+    m3.metric("🔴 Offline", len(df_filtered[df_filtered['monitor_state'] == "🔴 Offline"]))
+    m4.metric("⚫ Dead", len(df_filtered[df_filtered['monitor_state'] == "⚫ Dead"]))
 
-        # --- 5. BỘ LỌC TƯƠNG TÁC (TÌM THEO HOSTNAME) ---
-        st.write("---")
-        c_search1, c_search2 = st.columns([1, 2])
-        with c_search1:
-            search_query = st.text_input("🔍 Tìm theo Hostname/User:", placeholder="Nhập tên máy...", key="mon_search")
-        with c_search2:
-            all_states = ["🟢 Online", "🟡 Unstable", "🔴 Offline", "⚫ Dead"]
-            state_filter = st.multiselect("Lọc trạng thái hiển thị:", all_states, default=all_states[:2])
+    # --- 4. BỘ LỌC NHANH TRONG TAB ---
+    st.write("---")
+    c_search1, c_search2 = st.columns([2, 1])
+    with c_search1:
+        search_q = st.text_input("🔍 Tìm nhanh (Tên máy / Đại lý / Tỉnh):", placeholder="Nhập từ khóa...", key="mon_search")
+    with c_search2:
+        st.write(""); st.write("")
+        show_only_online = st.toggle("Chỉ hiện máy Online", value=False)
 
-        # Thực thi Filter
-        f_df = df_mon[df_mon['monitor_state'].isin(state_filter)]
-        if search_query:
-            f_df = f_df[
-                (f_df['username'].str.contains(search_query, case=False, na=False)) |
-                (f_df['hostname'].str.contains(search_query, case=False, na=False))
-            ]
+    # Thực thi Filter nhanh
+    f_df = df_filtered.copy()
+    if search_q:
+        f_df = f_df[
+            f_df['hostname'].str.contains(search_q, case=False, na=False) |
+            f_df['customer_name'].str.contains(search_q, case=False, na=False) |
+            f_df['province'].str.contains(search_q, case=False, na=False)
+        ]
+    if show_only_online:
+        f_df = f_df[f_df['monitor_state'] == "🟢 Online"]
 
-        # --- 6. DATA TABLE (ƯU TIÊN HOSTNAME) ---
-        f_df = f_df.sort_values("received_at", ascending=False)
-        
-        st.dataframe(
-            f_df[['hostname', 'username', DEALER_COL_NAME, 'monitor_state', 'mode_display', 
-                  'cpu_usage', 'ram_usage', 'off_minutes', 'received_at']],
-            column_config={
-                "hostname": "💻 Tên Máy (Hostname)",
-                "username": st.column_config.TextColumn("👤 User"),
-                DEALER_COL_NAME: "📍 Đại lý",
-                "monitor_state": "Trạng thái",
-                "mode_display": "Agent Mode",
-                "cpu_usage": st.column_config.ProgressColumn("CPU", min_value=0, max_value=100, format="%d%%"),
-                "ram_usage": st.column_config.ProgressColumn("RAM", min_value=0, max_value=100, format="%d%%"),
-                "off_minutes": st.column_config.NumberColumn("Vắng mặt", format="%.1f m"),
-                "received_at": "Lần cuối (UTC)"
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+    # --- 5. DATA TABLE (HIỆN THÔNG TIN ĐẠI LÝ) ---
+    st.dataframe(
+        f_df[['hostname', 'customer_name', 'province', 'monitor_state', 'excel_status', 'last_seen']],
+        column_config={
+            "hostname": "💻 Hostname",
+            "customer_name": "🏬 Đại lý / Khách hàng",
+            "province": "📍 Tỉnh thành",
+            "monitor_state": "Trạng thái",
+            "excel_status": "📋 Ghi chú kho",
+            "last_seen": st.column_config.DatetimeColumn("Lần cuối thấy", format="DD/MM HH:mm")
+        },
+        use_container_width=True,
+        hide_index=True
+    )
 
-        # --- 7. QUICK CONTROL PANEL (CHỌN THEO HOSTNAME) ---
-        st.write("---")
-        col_ctrl1, col_ctrl2 = st.columns([2, 1])
-        with col_ctrl1:
-            st.subheader("⚡ Remote Control")
-            # Tạo dictionary để người dùng chọn Hostname nhưng lấy được ID
-            host_to_id_map = {f"{row['hostname']} ({row['username']})": row['machine_id'] for _, row in f_df.iterrows()}
-            selected_host_label = st.selectbox(
-                "Chọn thiết bị mục tiêu (theo Hostname):", 
-                options=list(host_to_id_map.keys()) if host_to_id_map else ["Không có máy phù hợp"]
+    # --- 6. REMOTE CONTROL (ĐIỀU KHIỂN THEO MÃ MÁY THẬT) ---
+    st.write("---")
+    st.subheader("⚡ Remote Control")
+    # Lấy ra danh sách máy có Machine_id (máy đã từng online) để điều khiển
+    ctrl_df = f_df.dropna(subset=['machine_id'])
+    if not ctrl_df.empty:
+        col_sel, col_btn = st.columns([2, 1])
+        with col_sel:
+            target_label = st.selectbox(
+                "Chọn máy để gửi lệnh:",
+                options=ctrl_df.apply(lambda r: f"{r['hostname']} - {r['customer_name']}", axis=1)
             )
-            target_machine_id = host_to_id_map.get(selected_host_label)
+            # Tìm machine_id tương ứng
+            target_id = ctrl_df[ctrl_df.apply(lambda r: f"{r['hostname']} - {r['customer_name']}", axis=1) == target_label]['machine_id'].values[0]
         
-        with col_ctrl2:
+        with col_btn:
             st.write(""); st.write("")
-            btn_lock, btn_unlock = st.columns(2)
-            if target_machine_id:
-                if btn_lock.button("🔒 LOCK", type="primary", use_container_width=True, key="mon_lock_btn"):
-                    sb.table("commands").insert({"machine_id": target_machine_id, "command": "LOCK", "is_executed": False}).execute()
-                    st.toast(f"✅ Đã gửi lệnh KHÓA tới {selected_host_label}")
-                
-                if btn_unlock.button("🔓 UNLOCK", use_container_width=True, key="mon_unlock_btn"):
-                    sb.table("commands").insert({"machine_id": target_machine_id, "command": "UNLOCK", "is_executed": False}).execute()
-                    st.toast(f"✅ Đã gửi lệnh MỞ KHÓA tới {selected_host_label}")
-
-        # --- 8. DEBUG SYSTEM ---
-        with st.expander("🛠️ System Debug Information"):
-            st.json({
-                "App UTC Now": now_dt.isoformat(),
-                "Total Online": len(df_mon[df_mon['monitor_state'] == "🟢 Online"]),
-                "Columns": list(df_mon.columns)
-            })
+            if st.button("🔒 Gửi lệnh LOCK", type="primary", use_container_width=True):
+                sb.table("commands").insert({"machine_id": target_id, "command": "LOCK"}).execute()
+                st.toast(f"Đã gửi lệnh khóa tới {target_label}")
     else:
-        st.info("📡 Hệ thống đang sẵn sàng. Đang chờ Agent gửi tín hiệu đầu tiên...")
-        if st.button("🔄 Thử tải lại"): st.rerun()
+        st.warning("Chưa có máy nào trong bộ lọc này từng Online để nhận lệnh.")
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
     st.caption("Thực thi các lệnh điều khiển từ xa (Khóa/Mở) dựa trên Hostname thiết bị.")
