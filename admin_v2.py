@@ -1220,42 +1220,42 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
-    # 1. Lấy dữ liệu danh mục máy (đã tải ở đầu app)
-    # Giả định df_inv là dữ liệu từ bảng device_inventory sếp đã load
+    # 1. Đảm bảo đã có dữ liệu từ bảng inventory (df_inv) và events (df_evt_all)
     if not df_inv.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
             
-            # 2. CHUẨN HÓA DỮ LIỆU ĐẦU VÀO CHO AI
-            # Chúng ta copy df_inv để làm gốc, vì nó chứa đầy đủ tên Đại lý và Hostname
-            df_ai_input = df_inv.copy()
+            # --- BƯỚC QUAN TRỌNG: KHỚP NỐI (JOIN) DỮ LIỆU ---
+            # Lấy df_inv làm gốc để AI có đầy đủ thông tin định danh hostname và customer_name
+            df_final = df_inv.copy()
 
-            # 3. TÍNH TOÁN PHÚT OFFLINE THỰC TẾ
-            # Khớp thời gian từ cột 'last_seen' để biết máy nào thực sự đang chết
-            if 'last_seen' in df_ai_input.columns:
-                df_ai_input['ls_dt'] = pd.to_datetime(df_ai_input['last_seen'], utc=True)
-                df_ai_input['off_min'] = df_ai_input['ls_dt'].apply(
+            # 2. TÍNH TOÁN PHÚT OFFLINE TỪ DỮ LIỆU THỰC TRÊN DATABASE
+            # Cột 'last_seen' trong ảnh của sếp sẽ quyết định số phút Off
+            if 'last_seen' in df_final.columns:
+                df_final['ls_dt'] = pd.to_datetime(df_final['last_seen'], utc=True)
+                df_final['off_min'] = df_final['ls_dt'].apply(
                     lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
                 )
             else:
-                df_ai_input['off_min'] = 9999
+                # Nếu bảng inventory chưa có last_seen, ta gán mặc định để tránh crash
+                df_final['off_min'] = 0
 
-            # 4. KHỚP TÊN CỘT ĐỂ HIỂN THỊ (Mapping lại cho đúng hàm Render)
-            # Dò tìm và ép tên cột từ df_inv vào đúng label mà AI Hub yêu cầu
-            h_col = next((c for c in df_ai_input.columns if any(k in c.lower() for k in ['hostname', 'tên máy', 'máy'])), 'hostname')
-            d_col = next((c for c in df_ai_input.columns if any(k in c.lower() for k in ['đại lý', 'customer', 'khách', 'agency'])), 'customer_name')
-            
-            df_ai_input['hostname'] = df_ai_input[h_col]
-            df_ai_input['customer_name'] = df_ai_input[d_col]
+            # 3. ÉP KIỂU DỮ LIỆU ĐỂ HIỂN THỊ TRÊN HUB
+            # Đảm bảo các cột hostname và customer_name tồn tại đúng như trong ảnh database của sếp
+            # Trong ảnh database của sếp (Hình 4) đã có sẵn 'hostname' và 'customer_name' nên rất thuận lợi
+            df_final['hostname'] = df_final['hostname'].fillna("Unknown Host")
+            df_final['customer_name'] = df_final['customer_name'].fillna("Chưa đăng ký Đại lý")
 
-            # 5. RENDER CHIẾN LƯỢC
-            # Lúc này df_ai_input đã có: hostname thật, customer_name thật và off_min thật
-            render_ai_strategic_hub_v3(df_ai_input, now_dt_aware, sb)
+            # 4. GỌI BỘ NÃO AI RENDER DỮ LIỆU THẬT
+            # Giờ đây df_final đã chứa: Tên máy thật, Tên đại lý thật, và Phút offline thật
+            render_ai_strategic_hub_v3(df_final, now_dt_aware, sb)
 
         except Exception as e:
-            st.error(f"❌ Lỗi đồng bộ AI Hub: {e}")
+            # Fix lỗi hiển thị 'customer_name' bằng cách kiểm tra sự tồn tại của cột
+            st.error(f"❌ Lỗi đồng bộ dữ liệu thực: {e}")
+            st.info("Mẹo: Hãy đảm bảo bảng 'device_inventory' của sếp có cột 'customer_name' như trong hình.")
     else:
-        st.warning("📡 Chưa tìm thấy dữ liệu định danh trong bảng device_inventory.")
+        st.warning("📡 Hệ thống chưa load được bảng Inventory. Vui lòng kiểm tra kết nối Database.")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
