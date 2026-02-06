@@ -1220,42 +1220,46 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
-    # Lấy dữ liệu từ bảng inventory thực tế (Hình 4 sếp gửi)
+    # 1. Kiểm tra df_inv (Bảng chứa 'customer_name' thực tế của sếp)
     if 'df_inv' in locals() and not df_inv.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
             
-            # 1. TẠO BẢN BUILD SẠCH TỪ DATABASE THỰC
-            # Chúng ta dùng trực tiếp df_inv vì nó đã có sẵn 'customer_name' và 'hostname'
-            df_ai_work = df_inv.copy()
+            # 2. LÀM SẠCH DỮ LIỆU GỐC (Tránh lỗi Key Error)
+            # Ép tên cột về chữ thường để tránh lỗi 'Customer_Name' vs 'customer_name'
+            df_work = df_inv.copy()
+            df_work.columns = [c.lower().strip() for c in df_work.columns]
+            
+            # 3. SMART MAPPING (Ép dữ liệu vào đúng khuôn AI)
+            # Nếu sếp thấy bảng Database có 'hostname' và 'customer_name' thì đoạn này sẽ khớp ngay
+            if 'hostname' in df_work.columns and 'customer_name' in df_work.columns:
+                
+                # Tính toán phút rớt mạng thực tế
+                if 'last_seen' in df_work.columns:
+                    df_work['ls_dt'] = pd.to_datetime(df_work['last_seen'], utc=True, errors='coerce')
+                    df_work['off_min'] = df_work['ls_dt'].apply(
+                        lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
+                    )
+                else:
+                    df_work['off_min'] = 0
 
-            # 2. ĐẢM BẢO CỘT THỜI GIAN ĐỂ TÍNH OFFLINE
-            # Nếu database có cột last_seen, AI sẽ tính được phút rớt mạng thực tế
-            if 'last_seen' in df_ai_work.columns:
-                df_ai_work['last_seen_dt'] = pd.to_datetime(df_ai_work['last_seen'], utc=True)
-                df_ai_work['off_min'] = df_ai_work['last_seen_dt'].apply(
-                    lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
-                )
-            else:
-                # Nếu chưa có last_seen, AI coi như các máy đang ổn định (0 phút off)
-                df_ai_work['off_min'] = 0
+                # Đảm bảo các giá trị None được thay bằng chữ "Thực"
+                df_work['hostname'] = df_work['hostname'].fillna("Unknown-Host")
+                df_work['customer_name'] = df_work['customer_name'].fillna("Đại lý vãng lai")
 
-            # 3. KIỂM TRA CỘT TRƯỚC KHI RENDER (CHỐT HẠ LỖI HÌNH 5 & 6)
-            required_cols = ['hostname', 'customer_name']
-            if all(col in df_ai_work.columns for col in required_cols):
-                # Gán dữ liệu sạch cho render
-                render_ai_strategic_hub_v3(df_ai_work, now_dt_aware, sb)
+                # 4. RENDER VỚI DỮ LIỆU ĐÃ KHỚP
+                render_ai_strategic_hub_v3(df_work, now_dt_aware, sb)
+                
             else:
-                # Nếu thiếu cột, AI sẽ báo cáo thông minh cho sếp thay vì báo lỗi hệ thống
-                missing = [c for c in required_cols if c not in df_ai_work.columns]
-                st.warning(f"📋 AI đang đợi đồng bộ cột: {', '.join(missing)}")
-                st.info("Mẹo: Sếp hãy kiểm tra xem file Excel hoặc Database đã có đủ tiêu đề 'hostname' và 'customer_name' chưa.")
+                # Thông báo thông minh nếu cấu trúc cột bị sai lệch
+                cols_present = df_work.columns.tolist()
+                st.warning(f"⚠️ Cấu trúc Database chưa khớp. Cần: 'hostname', 'customer_name'. Hiện có: {cols_present}")
+                st.info("Sếp hãy kiểm tra lại tiêu đề cột trong bảng Supabase hoặc file Excel Import.")
 
         except Exception as e:
-            # Bắt lỗi cục bộ để không làm treo cả App
-            st.error(f"⚠️ AI Hub đang khởi động lại: {str(e)}")
+            st.error(f"❌ Lỗi xử lý thực chiến: {str(e)}")
     else:
-        st.info("📡 Đang đồng bộ hóa dữ liệu từ trung tâm... (6,000 Nodes)")
+        st.info("📡 Đang đồng bộ hóa dữ liệu từ 6,000 Agents... Sếp đợi em xíu nhé!")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
