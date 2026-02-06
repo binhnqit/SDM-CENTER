@@ -1343,3 +1343,70 @@ with t_sys:
                 st.toast("Đã gửi yêu cầu giải trình tới Admin liên quan.")
         with c_guard2:
             st.caption("AI Guard đang giám sát các thao tác có tác động đến Database.")
+with t_install:
+    st.header("🛠️ Quy trình triển khai Agent xuống Client")
+    
+    st.info("💡 **Yêu cầu hệ thống:** Windows 10/11, Python 3.9+, Kết nối Internet ổn định.")
+    
+    st.markdown("### 🛠 Bước 1: Chuẩn bị môi trường")
+    st.code("""
+# 1. Tải source code Agent về máy client
+# 2. Cài đặt các thư viện bổ trợ
+pip install requests pandas psutil
+    """, language="bash")
+
+    st.markdown("### 🔑 Bước 2: Cấu hình định danh (Quan trọng)")
+    st.warning("Mỗi máy phải có một Hostname duy nhất do sếp quy định để Dashboard nhận diện chính xác.")
+    st.write("Mở file `config.py` trên Agent và chỉnh sửa:")
+    st.code("""
+AGENT_CONFIG = {
+    "hostname": "4ORANGES_DL_001",  # Thay đổi theo tên đại lý
+    "server_url": "https://your-api-gateway.com",
+    "check_interval": 30 # Giây
+}
+    """, language="python")
+
+    st.markdown("### 🚀 Bước 3: Kích hoạt Agent & Watchdog")
+    st.write("Để Agent chạy ngầm và tự khởi động cùng Windows:")
+    st.markdown("""
+    1. Chuột phải vào file `start_agent.bat`.
+    2. Chọn **Create Shortcut**.
+    3. Nhấn `Win + R`, gõ `shell:startup` và Enter.
+    4. Kéo Shortcut vừa tạo vào thư mục này.
+    """)
+    
+    st.success("✅ Sau khi chạy, hãy quay lại Tab 'Giám sát' trên Dashboard để xác nhận máy đã hiện danh sách.")
+with t_guide:
+    st.header("📖 Hướng dẫn vận hành Dashboard")
+    st.markdown("""
+    Hệ thống quản lý Agent được thiết kế theo luồng tác chiến 4 bước. Dưới đây là cách sử dụng:
+    """)
+    
+    with st.expander("1️⃣ Giám sát thiết bị (Monitoring)", expanded=True):
+        st.write("""
+        - **Mục tiêu:** Kiểm tra xem máy nào đang sống (Online) hay đã mất kết nối (Offline/Dead).
+        - **Thao tác:** Sử dụng bộ lọc trạng thái và thanh tìm kiếm theo **Hostname**.
+        - **Lưu ý:** Nếu máy hiển thị `🔴 Offline` quá 30 phút, AI sẽ cảnh báo sự cố hạ tầng.
+        """)
+
+    with st.expander("2️⃣ Triển khai File & Cập nhật (Deployment)"):
+        st.write("""
+        - **Bước 1:** Tải file lên (SDF, Firmware, v.v...).
+        - **Bước 2:** Chọn máy theo Hostname. Bạn có thể chọn nhiều máy cùng lúc.
+        - **Bước 3:** Nhấn 'XÁC NHẬN CHIẾN DỊCH'.
+        - **Bước 4:** Nhấn '▶ START' tại bảng điều phối để bắt đầu truyền file. Theo dõi thanh Progress để biết tiến độ.
+        """)
+
+    with st.expander("3️⃣ Điều khiển từ xa (Remote Control)"):
+        st.write("""
+        - **Khóa máy (LOCK):** Ngay lập tức vô hiệu hóa thao tác tại Client.
+        - **Mở khóa (UNLOCK):** Khôi phục trạng thái sẵn sàng cho Client.
+        - **Gợi ý:** Luôn kiểm tra trạng thái 'Kết nối' trước khi phát lệnh để đảm bảo Agent đang nhận lệnh.
+        """)
+
+    with st.expander("4️⃣ Truy vết sự cố (AI Forensics)"):
+        st.write("""
+        - Chọn Hostname cần điều tra.
+        - Kéo thanh 'Hồi tố' để xem lại lịch sử sự kiện (Event Chain).
+        - Xem phần 'AI Final Conclusion' để biết nguyên nhân khách quan (mạng/nguồn) hay chủ quan (bị tắt Agent).
+        """)
