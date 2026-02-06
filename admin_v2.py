@@ -543,124 +543,105 @@ with t_mon:
                 st.toast("✅ Đã gửi lệnh UNLOCK")
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
-    st.caption("Thực thi các lệnh điều khiển từ xa (Khóa/Mở) dựa trên Hostname thiết bị.")
+    st.caption("Thực thi các lệnh điều khiển từ xa dựa trên danh sách hợp nhất (Excel + Agent).")
 
-    if not df_inv.empty:
-        # --- 0. ĐỒNG BỘ TRẠNG THÁI & MAPPING HOSTNAME ---
-        df_display = df_inv.copy()
+    # --- 1. SỬ DỤNG DỮ LIỆU HỢP NHẤT (df_all đã có đủ is_stranger, last_seen, customer_name) ---
+    if not df_all.empty:
+        df_ctrl_base = df_all.copy()
         
-        # Tạo từ điển Mapping để hiển thị Hostname thay cho ID
-        # id_to_host giúp hiển thị, host_to_id (nếu cần) hoặc giữ ID ngầm
-        id_to_host = pd.Series(df_display.hostname.values, index=df_display.machine_id).to_dict()
-        
-        if 'df_mon' in locals() and not df_mon.empty and 'monitor_state' in df_mon.columns:
-            status_map = df_mon.set_index('machine_id')['monitor_state'].to_dict()
-            df_display['monitor_state'] = df_display['machine_id'].map(status_map).fillna("⚫ Unknown")
-        else:
-            df_display['monitor_state'] = "❓ N/A"
+        # Tính toán trạng thái kết nối nhanh để hiển thị
+        now_dt = datetime.now(timezone.utc)
+        def get_conn_status(ls):
+            if pd.isna(ls): return "⚫ Dead"
+            ls_dt = pd.to_datetime(ls, utc=True)
+            if (now_dt - ls_dt).total_seconds() / 60 <= 15: return "🟢 Online"
+            return "🔴 Offline"
 
-        # Bảo hiểm các cột cần thiết
-        if DEALER_COL_NAME not in df_display.columns:
-            df_display[DEALER_COL_NAME] = "Chưa phân loại"
-        
-        if 'select' not in df_display.columns:
-            df_display.insert(0, 'select', False)
+        df_ctrl_base['conn_status'] = df_ctrl_base['last_seen'].apply(get_conn_status)
 
-        # --- 1. GIAO DIỆN CHỌN NHANH THEO HOSTNAME ---
-        selected_by_logic = []
-        c_sel1, c_sel2 = st.columns([2, 1])
-        
-        with c_sel1:
-            with st.expander(f"🏢 Chọn nhanh theo {DEALER_COL_NAME.upper()}", expanded=False):
-                temp_df = df_display.dropna(subset=[DEALER_COL_NAME])
-                if not temp_df.empty:
-                    groups = temp_df.groupby(DEALER_COL_NAME)
-                    c_dealer = st.columns(3)
-                    for i, (dealer, g) in enumerate(groups):
-                        # Hiển thị tên đại lý và số lượng máy (tên máy)
-                        if c_dealer[i % 3].checkbox(f"{dealer} ({len(g)})", key=f"ctrl_sel_{dealer}"):
-                            selected_by_logic.extend(g['machine_id'].tolist())
+        # --- 2. BỘ LỌC THÔNG MINH ---
+        col_f1, col_f2 = st.columns([2, 1])
+        selected_ids = []
 
-        with c_sel2:
-            with st.expander("🚨 Lọc Rủi ro", expanded=False):
-                risk_targets = df_display[df_display['monitor_state'].isin(['🔴 Offline', '⚫ Dead'])]
-                st.write(f"Tìm thấy: **{len(risk_targets)}** máy rủi ro")
-                if st.button("🚨 Chọn tất cả máy rủi ro", use_container_width=True, key="btn_risk_ctrl"):
-                    selected_by_logic.extend(risk_targets['machine_id'].tolist())
+        with col_f1:
+            with st.expander("🏢 Chọn nhanh theo Đại lý / Tỉnh thành", expanded=False):
+                # Lọc bỏ máy lạ để chọn theo đại lý chính quy
+                official_df = df_ctrl_base[df_ctrl_base['is_stranger'] == False]
+                dealers = sorted(official_df['customer_name'].unique().tolist())
+                sel_dealers = st.multiselect("Tích chọn Đại lý để gom máy:", dealers)
+                if sel_dealers:
+                    selected_ids.extend(official_df[official_df['customer_name'].isin(sel_dealers)]['machine_id'].tolist())
 
-        # --- 2. CHUẨN HÓA DỮ LIỆU HIỂN THỊ (SỬ DỤNG HOSTNAME) ---
-        if selected_by_logic:
-            unique_targets = list(set(selected_by_logic))
-            df_display.loc[df_display['machine_id'].isin(unique_targets), 'select'] = True
+        with col_f2:
+            with st.expander("🚨 Lọc nhanh Rủi ro", expanded=False):
+                if st.button("🔴 Chọn tất cả máy Offline/Dead", use_container_width=True):
+                    selected_ids.extend(df_ctrl_base[df_ctrl_base['conn_status'].isin(['🔴 Offline', '⚫ Dead'])]['machine_id'].tolist())
+                if st.button("🚨 Chọn tất cả MÁY LẠ", use_container_width=True):
+                    selected_ids.extend(df_ctrl_base[df_ctrl_base['is_stranger'] == True]['machine_id'].tolist())
 
-        actual_user_col = 'username' if 'username' in df_display.columns else \
-                          ('User' if 'User' in df_display.columns else df_display.columns[1])
-        
-        # TẠO DATAFRAME HIỂN THỊ VỚI CỘT HOSTNAME RÕ RÀNG
-        df_final = pd.DataFrame({
-            "Chon": df_display['select'].astype(bool),
-            "TenMay": df_display['hostname'].astype(str),      # Hostname làm chuẩn
-            "NguoiDung": df_display[actual_user_col].astype(str),
-            "KetNoi": df_display['monitor_state'].astype(str),
-            "TrangThai": df_display['status'].astype(str),
-            "ID_Goc": df_display['machine_id'].astype(str)     # Giữ ID ẩn để gửi lệnh
+        # --- 3. CHUẨN HÓA BẢNG BIÊN TẬP (DATA EDITOR) ---
+        # Chuẩn bị dữ liệu hiển thị gọn đẹp
+        df_editor = pd.DataFrame({
+            "Chon": df_ctrl_base['machine_id'].isin(selected_ids),
+            "Hostname": df_ctrl_base['hostname'],
+            "KhachHang": df_ctrl_base['customer_name'],
+            "TinhThanh": df_ctrl_base['province'],
+            "KetNoi": df_ctrl_base['conn_status'],
+            "Loai": df_ctrl_base['is_stranger'].apply(lambda x: "🚨 MÁY LẠ" if x else "✅ Chính quy"),
+            "machine_id": df_ctrl_base['machine_id'] # Giữ ID để gửi lệnh
         })
 
-        # --- 3. DATA EDITOR ---
         st.write("---")
-        edited = st.data_editor(
-            df_final,
+        edited_df = st.data_editor(
+            df_editor,
             column_config={
-                "Chon": st.column_config.CheckboxColumn("Chọn", help="Tích để thực thi"),
-                "TenMay": "🖥️ Tên Máy (Hostname)",
-                "NguoiDung": "👤 Người dùng",
+                "Chon": st.column_config.CheckboxColumn("Chọn", help="Tích chọn máy để gửi lệnh"),
+                "Hostname": "🖥️ Tên Máy",
+                "KhachHang": "🏬 Đại lý",
                 "KetNoi": "📡 Kết nối",
-                "TrangThai": "🔒 Khóa/Mở",
-                "ID_Goc": None # Ẩn cột ID gốc đi cho sạch giao diện
+                "Loai": "Phân loại",
+                "machine_id": None # Ẩn ID gốc
             },
-            disabled=["TenMay", "NguoiDung", "KetNoi", "TrangThai", "ID_Goc"],
+            disabled=["Hostname", "KhachHang", "TinhThanh", "KetNoi", "Loai"],
             hide_index=True,
             use_container_width=True,
-            key="ctrl_editor_hostname_v1"
+            key="ctrl_editor_v2"
         )
 
-        # --- 4. ACTION BAR (GỬI LỆNH) ---
-        # Lấy danh sách ID gốc từ những hàng được chọn dựa trên Hostname hiển thị
-        targets = edited[edited['Chon'] == True]['ID_Goc'].tolist()
+        # --- 4. XỬ LÝ GỬI LỆNH ---
+        final_targets = edited_df[edited_df['Chon'] == True]
         
-        if targets:
-            # Lấy danh sách Hostname tương ứng để hiển thị thông báo cho sếp
-            target_hosts = [id_to_host.get(m, m) for m in targets]
-            st.markdown(f"### ⚡ Thực thi với: `{', '.join(target_hosts)}`")
+        if not final_targets.empty:
+            target_ids = final_targets['machine_id'].tolist()
+            target_names = final_targets['Hostname'].tolist()
             
-            act1, act2 = st.columns(2)
+            st.warning(f"⚠️ Đang chọn **{len(target_ids)}** thiết bị: `{', '.join(target_names[:5])}{'...' if len(target_names)>5 else ''}`")
             
-            with act1:
-                if st.button("🔒 PHÁT LỆNH KHÓA", type="primary", use_container_width=True):
-                    try:
-                        cmds = [{"machine_id": m, "command": "LOCK", "is_executed": False} for m in targets]
-                        sb.table("commands").insert(cmds).execute()
-                        st.success(f"✅ Đã gửi lệnh KHÓA tới {len(targets)} thiết bị.")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Lỗi: {e}")
+            c1, c2, c3 = st.columns([1, 1, 1])
+            with c1:
+                if st.button("🔒 GỬI LỆNH KHÓA", type="primary", use_container_width=True):
+                    cmds = [{"machine_id": mid, "command": "LOCK", "is_executed": False} for mid in target_ids]
+                    sb.table("commands").insert(cmds).execute()
+                    st.success("✅ Đã phát lệnh KHÓA thành công!")
+                    time.sleep(1)
+                    st.rerun()
             
-            with act2:
-                if st.button("🔓 PHÁT LỆNH MỞ KHÓA", use_container_width=True):
-                    try:
-                        cmds = [{"machine_id": m, "command": "UNLOCK", "is_executed": False} for m in targets]
-                        sb.table("commands").insert(cmds).execute()
-                        st.success(f"✅ Đã gửi lệnh MỞ KHÓA tới {len(targets)} thiết bị.")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Lỗi: {e}")
+            with c2:
+                if st.button("🔓 GỬI LỆNH MỞ", use_container_width=True):
+                    cmds = [{"machine_id": mid, "command": "UNLOCK", "is_executed": False} for mid in target_ids]
+                    sb.table("commands").insert(cmds).execute()
+                    st.success("✅ Đã phát lệnh MỞ KHÓA thành công!")
+                    time.sleep(1)
+                    st.rerun()
+            
+            with c3:
+                if st.button("🧹 Bỏ chọn tất cả", use_container_width=True):
+                    st.rerun()
         else:
-            st.info("👆 Hãy tích chọn các máy (theo Hostname) ở bảng trên để thực hiện lệnh điều khiển.")
+            st.info("💡 Mẹo: Sếp có thể dùng bộ lọc ở trên hoặc tích trực tiếp vào bảng để chọn máy cần điều khiển.")
 
     else:
-        st.warning("⚠️ Hệ thống hiện chưa ghi nhận thiết bị nào trực tuyến.")
+        st.error("❌ Không có dữ liệu thiết bị để hiển thị.")
 
 # ==========================================
 # 0️⃣ KHỞI TẠO STATE (Đầu tab hoặc đầu file)
