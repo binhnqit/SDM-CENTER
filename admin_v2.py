@@ -89,36 +89,47 @@ df_inv, df_c, df_f = load_all_data()
 
 @st.cache_data(ttl=300) 
 @st.cache_data(ttl=300)
+@st.cache_data(ttl=600) # Cấu hình 10 phút như sếp đã chọn
 def get_unified_data():
     try:
-        # 1. Lấy dữ liệu hồ sơ từ Excel (Bảng Master)
+        # 1. Tải danh sách Master từ Excel
         res_inv = sb.table("device_inventory").select("*").execute()
         df_inventory = pd.DataFrame(res_inv.data)
         
-        # 2. Lấy dữ liệu kỹ thuật từ Agent (Bảng Status)
+        # 2. Tải trạng thái thực tế từ Agent
         res_dev = sb.table("devices").select("hostname, status, last_seen, machine_id").execute()
         df_agents = pd.DataFrame(res_dev.data)
         
-        if df_inventory.empty:
-            return df_agents # Nếu kho trống thì hiện data agent hiện có
-            
-        # 3. Tiến hành VLOOKUP (Left Join) bằng Pandas
-        # Lấy danh sách Excel làm gốc, điền trạng thái từ Agent vào
+        if df_inventory.empty and df_agents.empty:
+            return pd.DataFrame()
+
+        # 3. Sử dụng OUTER JOIN để không bỏ sót máy nào
+        # Máy có trong Excel nhưng không có Agent -> Offline
+        # Máy có Agent nhưng không có trong Excel -> Máy lạ (Stranger)
         df_combined = pd.merge(
             df_inventory, 
             df_agents, 
             on="hostname", 
-            how="left", 
+            how="outer", 
             suffixes=('', '_agent')
         )
         
-        # Xử lý các máy có trong danh sách nhưng chưa cài Agent (hiện Offline)
-        df_combined['status'] = df_combined['status'].fillna('offline')
+        # 4. Xử lý logic hậu Join
+        # Đồng bộ machine_id
+        if 'machine_id_agent' in df_combined.columns:
+            df_combined['machine_id'] = df_combined['machine_id'].combine_first(df_combined['machine_id_agent'])
+        
+        # Gán nhãn máy lạ
+        df_combined['is_stranger'] = df_combined['customer_name'].isna()
+        
+        # Điền giá trị mặc định cho máy lạ để tránh lỗi hiển thị
+        df_combined['customer_name'] = df_combined['customer_name'].fillna("⚠️ MÁY CHƯA CÓ TRONG HỆ THỐNG")
+        df_combined['province'] = df_combined['province'].fillna("Chưa xác định")
         
         return df_combined
         
     except Exception as e:
-        st.error(f"Lỗi đồng bộ dữ liệu: {e}")
+        st.error(f"❌ Lỗi đồng bộ dữ liệu: {e}")
         return pd.DataFrame()
 
 # --- GỌI DỮ LIỆU ---
@@ -434,18 +445,18 @@ with t_tokens:
             st.success(f"Đã cấp Token cho {new_owner}")
 
 with t_mon:
-    # --- 1. SỬ DỤNG DỮ LIỆU ĐÃ ĐƯỢC GỘP (df_filtered từ Sidebar) ---
+    # --- 1. SỬ DỤNG DỮ LIỆU ĐÃ LỌC ---
     st.header("🖥️ Device Monitoring Center")
-    st.caption(f"Hồ sơ: {len(df_all)} máy | Đang lọc: {len(df_filtered)} máy | Hệ thống {AGENT_VERSION}")
     
-    if df_filtered.empty:
-        st.info("📡 Không tìm thấy thiết bị nào phù hợp với bộ lọc.")
-        st.stop()
+    # Lấy danh sách máy lạ từ bộ lọc hiện tại
+    strangers_count = len(df_filtered[df_filtered['is_stranger'] == True])
+    
+    if strangers_count > 0:
+        st.warning(f"🚨 CẢNH BÁO: Phát hiện {strangers_count} máy lạ đang kết nối nhưng không có trong danh sách Excel!")
 
-    # --- 2. XỬ LÝ TRẠNG THÁI (Sử dụng dữ liệu real-time lồng trong df_filtered) ---
-    # Lưu ý: Vì mình dùng Left Join, các cột kỹ thuật có thể nằm trong cột lồng nhau hoặc cột riêng
-    # Tôi giả định df_filtered đã có 'status' và 'last_seen' từ bảng devices
-    
+    st.caption(f"Hồ sơ: {len(df_all)} máy | Đang hiển thị: {len(df_filtered)} máy")
+
+    # --- 2. XỬ LÝ TRẠNG THÁI REAL-TIME ---
     now_dt = datetime.now(timezone.utc)
 
     def resolve_state(last_seen):
@@ -464,18 +475,21 @@ with t_mon:
     m1.metric("🟢 Online", len(df_filtered[df_filtered['monitor_state'] == "🟢 Online"]))
     m2.metric("🟡 Unstable", len(df_filtered[df_filtered['monitor_state'] == "🟡 Unstable"]))
     m3.metric("🔴 Offline", len(df_filtered[df_filtered['monitor_state'] == "🔴 Offline"]))
-    m4.metric("⚫ Dead", len(df_filtered[df_filtered['monitor_state'] == "⚫ Dead"]))
+    m4.metric("🚨 Máy lạ", strangers_count)
 
-    # --- 4. BỘ LỌC NHANH TRONG TAB ---
+    # --- 4. BỘ LỌC TƯƠNG TÁC ---
     st.write("---")
-    c_search1, c_search2 = st.columns([2, 1])
+    c_search1, c_search2, c_search3 = st.columns([2, 1, 1])
     with c_search1:
-        search_q = st.text_input("🔍 Tìm nhanh (Tên máy / Đại lý / Tỉnh):", placeholder="Nhập từ khóa...", key="mon_search")
+        search_q = st.text_input("🔍 Tìm kiếm nhanh:", placeholder="Tên máy, Đại lý, Tỉnh...", key="mon_search")
     with c_search2:
         st.write(""); st.write("")
-        show_only_online = st.toggle("Chỉ hiện máy Online", value=False)
+        show_strangers = st.toggle("Chỉ hiện máy lạ", value=False)
+    with c_search3:
+        st.write(""); st.write("")
+        show_online = st.toggle("Chỉ hiện Online", value=False)
 
-    # Thực thi Filter nhanh
+    # Thực thi Filter
     f_df = df_filtered.copy()
     if search_q:
         f_df = f_df[
@@ -483,46 +497,50 @@ with t_mon:
             f_df['customer_name'].str.contains(search_q, case=False, na=False) |
             f_df['province'].str.contains(search_q, case=False, na=False)
         ]
-    if show_only_online:
+    if show_strangers:
+        f_df = f_df[f_df['is_stranger'] == True]
+    if show_online:
         f_df = f_df[f_df['monitor_state'] == "🟢 Online"]
 
-    # --- 5. DATA TABLE (HIỆN THÔNG TIN ĐẠI LÝ) ---
+    # --- 5. DATA TABLE ---
+    # Highlight máy lạ bằng màu sắc (nếu sếp muốn nâng cao hơn sau này)
     st.dataframe(
-        f_df[['hostname', 'customer_name', 'province', 'monitor_state', 'excel_status', 'last_seen']],
+        f_df[['hostname', 'customer_name', 'province', 'monitor_state', 'is_stranger', 'last_seen']],
         column_config={
             "hostname": "💻 Hostname",
             "customer_name": "🏬 Đại lý / Khách hàng",
             "province": "📍 Tỉnh thành",
             "monitor_state": "Trạng thái",
-            "excel_status": "📋 Ghi chú kho",
-            "last_seen": st.column_config.DatetimeColumn("Lần cuối thấy", format="DD/MM HH:mm")
+            "is_stranger": st.column_config.CheckboxColumn("Máy lạ?"),
+            "last_seen": st.column_config.DatetimeColumn("Cập nhật cuối", format="DD/MM HH:mm")
         },
         use_container_width=True,
         hide_index=True
     )
 
-    # --- 6. REMOTE CONTROL (ĐIỀU KHIỂN THEO MÃ MÁY THẬT) ---
+    # --- 6. REMOTE CONTROL ---
     st.write("---")
     st.subheader("⚡ Remote Control")
-    # Lấy ra danh sách máy có Machine_id (máy đã từng online) để điều khiển
     ctrl_df = f_df.dropna(subset=['machine_id'])
     if not ctrl_df.empty:
         col_sel, col_btn = st.columns([2, 1])
         with col_sel:
+            # Dropdown hiển thị cả Tên máy và Đại lý để sếp chọn cho chuẩn
             target_label = st.selectbox(
-                "Chọn máy để gửi lệnh:",
-                options=ctrl_df.apply(lambda r: f"{r['hostname']} - {r['customer_name']}", axis=1)
+                "Chọn mục tiêu điều khiển:",
+                options=ctrl_df.apply(lambda r: f"{r['hostname']} | {r['customer_name']}", axis=1)
             )
-            # Tìm machine_id tương ứng
-            target_id = ctrl_df[ctrl_df.apply(lambda r: f"{r['hostname']} - {r['customer_name']}", axis=1) == target_label]['machine_id'].values[0]
+            target_id = ctrl_df[ctrl_df.apply(lambda r: f"{r['hostname']} | {r['customer_name']}", axis=1) == target_label]['machine_id'].values[0]
         
         with col_btn:
             st.write(""); st.write("")
-            if st.button("🔒 Gửi lệnh LOCK", type="primary", use_container_width=True):
+            b1, b2 = st.columns(2)
+            if b1.button("🔒 LOCK", type="primary", use_container_width=True):
                 sb.table("commands").insert({"machine_id": target_id, "command": "LOCK"}).execute()
-                st.toast(f"Đã gửi lệnh khóa tới {target_label}")
-    else:
-        st.warning("Chưa có máy nào trong bộ lọc này từng Online để nhận lệnh.")
+                st.toast("✅ Đã gửi lệnh LOCK")
+            if b2.button("🔓 UNLOCK", use_container_width=True):
+                sb.table("commands").insert({"machine_id": target_id, "command": "UNLOCK"}).execute()
+                st.toast("✅ Đã gửi lệnh UNLOCK")
 with t_ctrl:
     st.subheader("🎮 Trung tâm Lệnh Chiến lược")
     st.caption("Thực thi các lệnh điều khiển từ xa (Khóa/Mở) dựa trên Hostname thiết bị.")
