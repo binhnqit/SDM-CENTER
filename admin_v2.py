@@ -1225,6 +1225,7 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
                 )
 
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
+# --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
     if not df_inv.empty:
         try:
@@ -1232,28 +1233,44 @@ with t_ai:
             now_dt_aware = datetime.now(timezone.utc)
             df_ai_input = df_inv.copy()
             
+            # --- FIX LỖI ['customer_name'] NOT IN INDEX ---
+            # Nếu không tìm thấy cột customer_name, ta sẽ mapping từ DEALER_COL_NAME hoặc lấy cột đầu tiên
+            if 'customer_name' not in df_ai_input.columns:
+                if 'DEALER_COL_NAME' in locals() and DEALER_COL_NAME in df_ai_input.columns:
+                    df_ai_input['customer_name'] = df_ai_input[DEALER_COL_NAME]
+                elif 'Đại lý' in df_ai_input.columns:
+                    df_ai_input['customer_name'] = df_ai_input['Đại lý']
+                else:
+                    # Nếu bí quá thì lấy tạm Username hoặc gán là "N/A"
+                    df_ai_input['customer_name'] = df_ai_input.get('username', 'Khách hàng ẩn danh')
+
+            # Đảm bảo có cột hostname để AI không bị lỗi index
+            if 'hostname' not in df_ai_input.columns:
+                df_ai_input['hostname'] = df_ai_input.get('machine_id', 'Unknown-Host')
+
             # Tính toán off_min nhanh để AI phân tích
             if 'last_seen' in df_ai_input.columns:
                 df_ai_input['ls_dt'] = pd.to_datetime(df_ai_input['last_seen'], utc=True)
                 df_ai_input['off_min'] = df_ai_input['ls_dt'].apply(
                     lambda x: (now_dt_aware - x).total_seconds() / 60 if pd.notnull(x) else 999
                 )
+            else:
+                df_ai_input['off_min'] = 0 # Mặc định nếu chưa có dữ liệu kết nối
 
-            # 2. Sidebar Control: Cho sếp nút bấm "Ép AI học"
-            st.sidebar.markdown("---")
-            if st.sidebar.button("🧠 Manual AI Learning Snapshot", help="Ép AI ghi nhớ trạng thái hiện tại"):
-                with st.spinner("AI đang nạp dữ liệu..."):
-                    # Chạy engine snapshot
-                    feat = AI_Engine_v3.calculate_features(df_ai_input, now_dt_aware)
-                    AI_Engine_v3.run_snapshot(sb, feat)
-                    st.toast("✅ AI đã cập nhật Memory Layer!")
-                    st.rerun()
+            # 2. Sidebar Control
+            if st.sidebar.button("🧠 Manual AI Learning Snapshot"):
+                feat = AI_Engine_v3.calculate_features(df_ai_input, now_dt_aware)
+                AI_Engine_v3.run_snapshot(sb, feat)
+                st.toast("✅ AI đã cập nhật Memory Layer!")
+                st.rerun()
 
-            # 3. Thực thi Render
+            # 3. Thực thi Render - Lúc này df_ai_input đã có đầy đủ cột cần thiết
             render_ai_strategic_hub_v3(df_ai_input, now_dt_aware, sb)
 
         except Exception as e:
             st.error(f"❌ AI Hub Error: {e}")
+    else:
+        st.info("📡 Đang chờ dữ liệu để khởi động bộ não AI...")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
