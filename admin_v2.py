@@ -124,7 +124,25 @@ def get_unified_data():
 # --- GỌI DỮ LIỆU ---
 # Sếp nên gọi hàm này thay cho load_all_data cũ ở các phần liên quan đến giám sát
 df_all = get_unified_data()
+st.sidebar.header("🎯 QUẢN TRỊ CHIẾN LƯỢC")
 
+if not df_all.empty:
+    # Lọc theo Tỉnh thành
+    all_provinces = sorted(df_all['province'].dropna().unique().tolist())
+    selected_p = st.sidebar.multiselect("📍 Lọc theo Tỉnh thành", all_provinces)
+    
+    # Lọc theo Đại lý
+    all_customers = sorted(df_all['customer_name'].dropna().unique().tolist())
+    selected_c = st.sidebar.multiselect("🏬 Lọc theo Đại lý", all_customers)
+    
+    # Thực hiện lọc
+    df_filtered = df_all.copy()
+    if selected_p:
+        df_filtered = df_filtered[df_filtered['province'].isin(selected_p)]
+    if selected_c:
+        df_filtered = df_filtered[df_filtered['customer_name'].isin(selected_c)]
+else:
+    df_filtered = df_all
 # Lấy dữ liệu lệnh và file để dùng cho các Tab khác (vẫn giữ logic cũ của sếp)
 _, df_c, df_f = load_all_data()
 # --- SIDEBAR FILTERS ---
