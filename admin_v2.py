@@ -88,36 +88,37 @@ df_inv, df_c, df_f = load_all_data()
 # --- DATA ENGINE (Gộp hàm cũ và mới để tối ưu) ---
 
 @st.cache_data(ttl=300) 
+@st.cache_data(ttl=300)
 def get_unified_data():
     try:
-        # Sử dụng sb (biến sếp đã tạo) thay vì supabase
-        # SELECT * lấy toàn bộ info từ Excel, và lấy thêm status, machine_id từ bảng devices
-        response = sb.table("device_inventory").select("*, devices(status, last_seen, machine_id)").execute()
+        # 1. Lấy dữ liệu hồ sơ từ Excel (Bảng Master)
+        res_inv = sb.table("device_inventory").select("*").execute()
+        df_inventory = pd.DataFrame(res_inv.data)
         
-        if not response.data:
-            return pd.DataFrame()
+        # 2. Lấy dữ liệu kỹ thuật từ Agent (Bảng Status)
+        res_dev = sb.table("devices").select("hostname, status, last_seen, machine_id").execute()
+        df_agents = pd.DataFrame(res_dev.data)
+        
+        if df_inventory.empty:
+            return df_agents # Nếu kho trống thì hiện data agent hiện có
             
-        df = pd.DataFrame(response.data)
+        # 3. Tiến hành VLOOKUP (Left Join) bằng Pandas
+        # Lấy danh sách Excel làm gốc, điền trạng thái từ Agent vào
+        df_combined = pd.merge(
+            df_inventory, 
+            df_agents, 
+            on="hostname", 
+            how="left", 
+            suffixes=('', '_agent')
+        )
         
-        # Xử lý dữ liệu lồng nhau (Flatten nested JSON từ Supabase)
-        # Vì devices là bảng phụ nên nó sẽ chui vào một cột dạng list/dict
-        def extract_status(row):
-            if isinstance(row, list) and len(row) > 0:
-                return row[0].get('status', 'offline')
-            return 'offline'
+        # Xử lý các máy có trong danh sách nhưng chưa cài Agent (hiện Offline)
+        df_combined['status'] = df_combined['status'].fillna('offline')
         
-        def extract_last_seen(row):
-            if isinstance(row, list) and len(row) > 0:
-                return row[0].get('last_seen', None)
-            return None
-
-        if 'devices' in df.columns:
-            df['online_status'] = df['devices'].apply(extract_status)
-            df['last_seen_agent'] = df['devices'].apply(extract_last_seen)
+        return df_combined
         
-        return df
     except Exception as e:
-        st.error(f"Lỗi kết nối dữ liệu: {e}")
+        st.error(f"Lỗi đồng bộ dữ liệu: {e}")
         return pd.DataFrame()
 
 # --- GỌI DỮ LIỆU ---
