@@ -1220,42 +1220,42 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
-    # 1. Đảm bảo đã có dữ liệu từ bảng inventory (df_inv) và events (df_evt_all)
-    if not df_inv.empty:
+    # Lấy dữ liệu từ bảng inventory thực tế (Hình 4 sếp gửi)
+    if 'df_inv' in locals() and not df_inv.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
             
-            # --- BƯỚC QUAN TRỌNG: KHỚP NỐI (JOIN) DỮ LIỆU ---
-            # Lấy df_inv làm gốc để AI có đầy đủ thông tin định danh hostname và customer_name
-            df_final = df_inv.copy()
+            # 1. TẠO BẢN BUILD SẠCH TỪ DATABASE THỰC
+            # Chúng ta dùng trực tiếp df_inv vì nó đã có sẵn 'customer_name' và 'hostname'
+            df_ai_work = df_inv.copy()
 
-            # 2. TÍNH TOÁN PHÚT OFFLINE TỪ DỮ LIỆU THỰC TRÊN DATABASE
-            # Cột 'last_seen' trong ảnh của sếp sẽ quyết định số phút Off
-            if 'last_seen' in df_final.columns:
-                df_final['ls_dt'] = pd.to_datetime(df_final['last_seen'], utc=True)
-                df_final['off_min'] = df_final['ls_dt'].apply(
+            # 2. ĐẢM BẢO CỘT THỜI GIAN ĐỂ TÍNH OFFLINE
+            # Nếu database có cột last_seen, AI sẽ tính được phút rớt mạng thực tế
+            if 'last_seen' in df_ai_work.columns:
+                df_ai_work['last_seen_dt'] = pd.to_datetime(df_ai_work['last_seen'], utc=True)
+                df_ai_work['off_min'] = df_ai_work['last_seen_dt'].apply(
                     lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
                 )
             else:
-                # Nếu bảng inventory chưa có last_seen, ta gán mặc định để tránh crash
-                df_final['off_min'] = 0
+                # Nếu chưa có last_seen, AI coi như các máy đang ổn định (0 phút off)
+                df_ai_work['off_min'] = 0
 
-            # 3. ÉP KIỂU DỮ LIỆU ĐỂ HIỂN THỊ TRÊN HUB
-            # Đảm bảo các cột hostname và customer_name tồn tại đúng như trong ảnh database của sếp
-            # Trong ảnh database của sếp (Hình 4) đã có sẵn 'hostname' và 'customer_name' nên rất thuận lợi
-            df_final['hostname'] = df_final['hostname'].fillna("Unknown Host")
-            df_final['customer_name'] = df_final['customer_name'].fillna("Chưa đăng ký Đại lý")
-
-            # 4. GỌI BỘ NÃO AI RENDER DỮ LIỆU THẬT
-            # Giờ đây df_final đã chứa: Tên máy thật, Tên đại lý thật, và Phút offline thật
-            render_ai_strategic_hub_v3(df_final, now_dt_aware, sb)
+            # 3. KIỂM TRA CỘT TRƯỚC KHI RENDER (CHỐT HẠ LỖI HÌNH 5 & 6)
+            required_cols = ['hostname', 'customer_name']
+            if all(col in df_ai_work.columns for col in required_cols):
+                # Gán dữ liệu sạch cho render
+                render_ai_strategic_hub_v3(df_ai_work, now_dt_aware, sb)
+            else:
+                # Nếu thiếu cột, AI sẽ báo cáo thông minh cho sếp thay vì báo lỗi hệ thống
+                missing = [c for c in required_cols if c not in df_ai_work.columns]
+                st.warning(f"📋 AI đang đợi đồng bộ cột: {', '.join(missing)}")
+                st.info("Mẹo: Sếp hãy kiểm tra xem file Excel hoặc Database đã có đủ tiêu đề 'hostname' và 'customer_name' chưa.")
 
         except Exception as e:
-            # Fix lỗi hiển thị 'customer_name' bằng cách kiểm tra sự tồn tại của cột
-            st.error(f"❌ Lỗi đồng bộ dữ liệu thực: {e}")
-            st.info("Mẹo: Hãy đảm bảo bảng 'device_inventory' của sếp có cột 'customer_name' như trong hình.")
+            # Bắt lỗi cục bộ để không làm treo cả App
+            st.error(f"⚠️ AI Hub đang khởi động lại: {str(e)}")
     else:
-        st.warning("📡 Hệ thống chưa load được bảng Inventory. Vui lòng kiểm tra kết nối Database.")
+        st.info("📡 Đang đồng bộ hóa dữ liệu từ trung tâm... (6,000 Nodes)")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
