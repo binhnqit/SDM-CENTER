@@ -1217,15 +1217,52 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
     t_overview, t_analysis, t_prediction, t_rag = st.tabs(["🚀 CHIẾN LƯỢC", "🕵️ TRUY VẾT", "🔮 DỰ BÁO", "💬 AI ASSISTANT"])
 
     with t_overview:
-    # --- PHẦN DECISION ENGINE MỚI ---
-    st.markdown("### 🤖 AI Autonomous Decisions")
-    
-    # Thiết lập context kinh doanh
-    context = {
-        "sales_weight": 1.2,
-        "max_impact": 100,
-        "is_peak_hour": 8 <= datetime.now().hour <= 18
-    }
+        # --- PHẦN DECISION ENGINE MỚI (Đã căn lề chuẩn) ---
+        st.markdown("### 🤖 AI Autonomous Decisions")
+        
+        # Thiết lập context kinh doanh (Sếp có thể điều chỉnh trọng số ở đây)
+        context = {
+            "sales_weight": 1.2,
+            "max_impact": 100,
+            "is_peak_hour": 8 <= datetime.now().hour <= 18
+        }
+        
+        # Chạy Engine để lấy danh sách quyết định
+        # Lưu ý: df_ai_work phải là biến chứa dữ liệu 6000 máy đã xử lý ở trên
+        decisions = AI_Decision_Logic.generate_decisions(df_ai_work, context)
+        
+        if not decisions:
+            st.success("✅ AI không phát hiện rủi ro nào cần can thiệp ngay lập tức.")
+        else:
+            for d in decisions:
+                # Tạo thẻ Decision với Style Enterprise Apple-ish
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    with c1:
+                        st.markdown(f"**Action: {d['decision_type']}**")
+                        st.caption(f"Scope: {d['scope']}")
+                    with c2:
+                        st.metric("Priority", d['priority'])
+                    with c3:
+                        st.metric("Confidence", f"{int(d['confidence']*100)}%")
+                    
+                    # Reason chain - Giải trình logic của AI
+                    with st.expander("Xem giải trình (Reasoning chain)"):
+                        for r in d['reason']:
+                            st.write(f"- {r}")
+                        st.divider()
+                        st.write(f"⏱️ Hết hạn lúc: {d['expires_at']}")
+                        
+                    # Nút tương tác thực tế
+                    btn_col1, btn_col2 = st.columns(2)
+                    if btn_col1.button("✅ Phê duyệt", key=f"app_{d['scope']}"):
+                        st.toast(f"Đã thực hiện: {d['decision_type']} cho {d['scope']}")
+                    
+                    if btn_col2.button("❌ Bỏ qua", key=f"ign_{d['scope']}"):
+                        st.toast("Đã ghi nhận ý kiến phản hồi của Sếp.")
+        
+        st.write("---")
+        # Tiếp tục các phần biểu đồ Risk Index bên dưới...
     
     # Chạy Engine
     decisions = AI_Decision_Logic.generate_decisions(df_ai_work, context)
