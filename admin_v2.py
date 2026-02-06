@@ -1220,42 +1220,56 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
-    # 1. Kiểm tra cả hai nguồn dữ liệu: df_inv (có Tên đại lý) và df_ai (có CPU/RAM)
-    if 'df_inv' in locals() and 'df_ai' in locals() and not df_inv.empty:
+    # --- BƯỚC 1: XÁC ĐỊNH NGUỒN DỮ LIỆU THỰC ---
+    # Ưu tiên lấy df_all (bảng đã gộp Master + Agent), nếu không có thì lấy df_inv
+    source_df = None
+    if 'df_all' in locals() and not df_all.empty:
+        source_df = df_all.copy()
+    elif 'df_inv' in locals() and not df_inv.empty:
+        source_df = df_inv.copy()
+    elif 'df_ai' in locals() and not df_ai.empty:
+        source_df = df_ai.copy()
+
+    if source_df is not None:
         try:
             now_dt_aware = datetime.now(timezone.utc)
             
-            # --- BƯỚC THẦN THÁNH: ĐẮP DỮ LIỆU ĐỊNH DANH ---
-            # Chúng ta lấy bảng vận hành (df_ai) làm gốc, rồi 'dán' tên đại lý từ df_inv vào
-            df_final = pd.merge(
-                df_ai[['machine_id', 'last_seen', 'is_online']], # Lấy dữ liệu sống
-                df_inv[['machine_id', 'hostname', 'customer_name']], # Lấy tên đại lý thật
-                on='machine_id', 
-                how='left'
-            )
+            # --- BƯỚC 2: CHUẨN HÓA CỘT (Case-insensitive) ---
+            # Ép tất cả tiêu đề về chữ thường để AI không bị lạc đường
+            source_df.columns = [c.lower().strip() for c in source_df.columns]
 
-            # 2. CHUẨN HÓA CỘT (Force Lowercase)
-            df_final.columns = [c.lower().strip() for c in df_final.columns]
+            # --- BƯỚC 3: FORCE MAPPING (Ép định danh) ---
+            # Nếu thiếu customer_name, AI sẽ lấy tạm Province hoặc ID để không bị lỗi đỏ
+            if 'customer_name' not in source_df.columns:
+                if 'đại lý' in source_df.columns: source_df['customer_name'] = source_df['đại lý']
+                elif 'location' in source_df.columns: source_df['customer_name'] = source_df['location']
+                else: source_df['customer_name'] = "Đại lý chưa định danh"
+            
+            if 'hostname' not in source_df.columns:
+                source_df['hostname'] = source_df.get('machine_id', 'Unknown-Node')
 
-            # 3. TÍNH PHÚT OFFLINE THẬT
-            if 'last_seen' in df_final.columns:
-                df_final['ls_dt'] = pd.to_datetime(df_final['last_seen'], utc=True, errors='coerce')
-                df_final['off_min'] = df_final['ls_dt'].apply(
+            # --- BƯỚC 4: TÍNH TOÁN THỜI GIAN THỰC ---
+            if 'last_seen' in source_df.columns:
+                source_df['ls_dt'] = pd.to_datetime(source_df['last_seen'], utc=True, errors='coerce')
+                source_df['off_min'] = source_df['ls_dt'].apply(
                     lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
                 )
-            
-            # 4. LẤY DỮ LIỆU SẠCH CHO RENDER
-            # Điền giá trị mặc định nếu máy mới chưa kịp cập nhật tên
-            df_final['hostname'] = df_final['hostname'].fillna(df_final['machine_id'])
-            df_final['customer_name'] = df_final['customer_name'].fillna("Đại lý mới - Đang cập nhật")
+            else:
+                source_df['off_min'] = 0
 
-            # CHÍNH THỨC RENDER CHIẾN LƯỢC
-            render_ai_strategic_hub_v3(df_final, now_dt_aware, sb)
+            # Điền khuyết dữ liệu để bảng đẹp 100%
+            source_df = source_df.fillna("N/A")
+
+            # --- BƯỚC 5: CHÍNH THỨC RENDER ---
+            render_ai_strategic_hub_v3(source_df, now_dt_aware, sb)
 
         except Exception as e:
-            st.error(f"❌ Lỗi ghép nối định danh: {str(e)}")
+            st.error(f"❌ AI Engine bị nghẽn: {str(e)}")
+            st.code(source_df.columns.tolist()) # Hiện cột thực tế để sếp check
     else:
-        st.warning("📡 AI đang chờ sếp nạp bảng Inventory (Tổng kho) để lấy tên Đại lý!")
+        # Nếu thực sự không tìm thấy biến nào, AI sẽ hướng dẫn sếp check biến
+        st.error("🚨 Không tìm thấy nguồn dữ liệu (df_all, df_inv, df_ai)!")
+        st.info("Sếp hãy kiểm tra xem ở đầu App sếp đã đặt tên biến chứa bảng 6,000 máy là gì nhé.")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
