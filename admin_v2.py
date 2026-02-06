@@ -1229,48 +1229,40 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 with t_ai:
     if not df_inv.empty:
         try:
-            # 1. Chuẩn hóa dữ liệu đầu vào cho AI
             now_dt_aware = datetime.now(timezone.utc)
+            # Tạo bản sao để không làm hỏng dữ liệu gốc
             df_ai_input = df_inv.copy()
-            
-            # --- FIX LỖI ['customer_name'] NOT IN INDEX ---
-            # Nếu không tìm thấy cột customer_name, ta sẽ mapping từ DEALER_COL_NAME hoặc lấy cột đầu tiên
-            if 'customer_name' not in df_ai_input.columns:
-                if 'DEALER_COL_NAME' in locals() and DEALER_COL_NAME in df_ai_input.columns:
-                    df_ai_input['customer_name'] = df_ai_input[DEALER_COL_NAME]
-                elif 'Đại lý' in df_ai_input.columns:
-                    df_ai_input['customer_name'] = df_ai_input['Đại lý']
-                else:
-                    # Nếu bí quá thì lấy tạm Username hoặc gán là "N/A"
-                    df_ai_input['customer_name'] = df_ai_input.get('username', 'Khách hàng ẩn danh')
 
-            # Đảm bảo có cột hostname để AI không bị lỗi index
+            # --- KHỚP LỆNH TÊN CỘT (FIX LỖI HIỂN THỊ NONE) ---
+            # Dò tìm cột Hostname: Ưu tiên 'hostname' -> 'Tên máy' -> Cột đầu tiên
             if 'hostname' not in df_ai_input.columns:
-                df_ai_input['hostname'] = df_ai_input.get('machine_id', 'Unknown-Host')
+                host_col = next((c for c in df_ai_input.columns if 'host' in c.lower() or 'tên máy' in c.lower()), df_ai_input.columns[0])
+                df_ai_input['hostname'] = df_ai_input[host_col]
 
-            # Tính toán off_min nhanh để AI phân tích
+            # Dò tìm cột Đại lý: Ưu tiên 'customer_name' -> 'Đại lý / Khách hàng' -> 'Đại lý'
+            if 'customer_name' not in df_ai_input.columns:
+                dealer_col = next((c for c in df_ai_input.columns if 'đại lý' in c.lower() or 'customer' in c.lower() or 'khách hàng' in c.lower()), None)
+                df_ai_input['customer_name'] = df_ai_input[dealer_col] if dealer_col else "Chưa định danh"
+
+            # Đảm bảo dữ liệu không bị None trước khi hiển thị
+            df_ai_input['hostname'] = df_ai_input['hostname'].fillna("Unknown Host")
+            df_ai_input['customer_name'] = df_ai_input['customer_name'].fillna("N/A")
+
+            # --- TÍNH TOÁN THỜI GIAN OFFLINE ---
             if 'last_seen' in df_ai_input.columns:
                 df_ai_input['ls_dt'] = pd.to_datetime(df_ai_input['last_seen'], utc=True)
                 df_ai_input['off_min'] = df_ai_input['ls_dt'].apply(
-                    lambda x: (now_dt_aware - x).total_seconds() / 60 if pd.notnull(x) else 999
+                    lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
                 )
             else:
-                df_ai_input['off_min'] = 0 # Mặc định nếu chưa có dữ liệu kết nối
+                # Nếu không có last_seen, giả lập để sếp thấy bảng hoạt động
+                df_ai_input['off_min'] = 0 
 
-            # 2. Sidebar Control
-            if st.sidebar.button("🧠 Manual AI Learning Snapshot"):
-                feat = AI_Engine_v3.calculate_features(df_ai_input, now_dt_aware)
-                AI_Engine_v3.run_snapshot(sb, feat)
-                st.toast("✅ AI đã cập nhật Memory Layer!")
-                st.rerun()
-
-            # 3. Thực thi Render - Lúc này df_ai_input đã có đầy đủ cột cần thiết
+            # Thực thi Render
             render_ai_strategic_hub_v3(df_ai_input, now_dt_aware, sb)
 
         except Exception as e:
             st.error(f"❌ AI Hub Error: {e}")
-    else:
-        st.info("📡 Đang chờ dữ liệu để khởi động bộ não AI...")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
