@@ -124,7 +124,7 @@ if not df_inv.empty: # Sửa từ df_d thành df_inv
     m4.metric("Dung lượng RAM", f"{df_inv['ram_usage'].mean():.1f}%")
 # --- NAVIGATION TABS ---
 # --- TRONG PHẦN KHAI BÁO TABS ---
-t_mon, t_ctrl, t_file, t_csv, t_sum, t_offline, t_ai, t_tokens, t_sys = st.tabs([
+t_mon, t_ctrl, t_file, t_csv, t_sum, t_offline, t_ai, t_tokens, t_sys, t_guide, t_install = st.tabs([
     "📊 GIÁM SÁT",
     "🎮 ĐIỀU KHIỂN",
     "📤 TRUYỀN FILE",
