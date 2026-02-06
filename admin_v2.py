@@ -1357,7 +1357,7 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
-    # 1. Xác định nguồn dữ liệu (như bước trước)
+    # 1. Xác định nguồn dữ liệu
     df_ai_work = None
     if 'df_all' in locals(): df_ai_work = df_all.copy()
     elif 'df_final' in locals(): df_ai_work = df_final.copy()
@@ -1366,41 +1366,72 @@ with t_ai:
     if df_ai_work is not None and not df_ai_work.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
+            # Chuẩn hóa tên cột
             df_ai_work.columns = [c.lower().strip() for c in df_ai_work.columns]
 
-            # --- BƯỚC QUAN TRỌNG: TẠO CỘT OFF_MIN NẾU THIẾU ---
+            # --- BƯỚC BẢO VỆ 1: TỰ TẠO CỘT THIẾU ĐỂ ENGINE KHÔNG CRASH ---
+            if 'agent_version' not in df_ai_work.columns:
+                # Nếu database chưa có version, ta gán tạm là "V1.0-Live" 
+                # hoặc dùng cột 'status' để AI vẫn phân loại được
+                df_ai_work['agent_version'] = "V1.0-Active"
+
             if 'off_min' not in df_ai_work.columns:
                 if 'last_seen' in df_ai_work.columns:
-                    # Tính toán dựa trên thời gian thực rớt mạng
                     df_ai_work['ls_dt'] = pd.to_datetime(df_ai_work['last_seen'], utc=True, errors='coerce')
                     df_ai_work['off_min'] = df_ai_work['ls_dt'].apply(
                         lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
                     )
                 else:
-                    # Nếu hoàn toàn không có dữ liệu thời gian, mặc định là 0 để không lỗi
                     df_ai_work['off_min'] = 0
 
-            # --- ĐẢM BẢO CÁC CỘT ĐỊNH DANH ĐỂ KHÔNG HIỆN NONE ---
-            if 'customer_name' not in df_ai_work.columns:
-                df_ai_work['customer_name'] = "Đại lý chưa xác định"
-            if 'hostname' not in df_ai_work.columns:
-                df_ai_work['hostname'] = df_ai_work.get('machine_id', 'Unknown-Host')
+            # Điền khuyết dữ liệu định danh
+            df_ai_work['customer_name'] = df_ai_work.get('customer_name', "Đại lý chưa xác định").fillna("N/A")
+            df_ai_work['hostname'] = df_ai_work.get('hostname', df_ai_work.get('machine_id', 'Unknown-Host'))
+            df_ai_work['province'] = df_ai_work.get('province', "Toàn quốc").fillna("N/A")
 
-            # --- RENDER VÀ CHẠY DECISION ENGINE ---
+            # --- BƯỚC 2: RENDER HUB ---
             render_ai_strategic_hub_v3(df_ai_work, now_dt_aware, sb)
             
-            # Phần Decision Engine của sếp
-            context = {"sales_weight": 1.2, "max_impact": 100, "is_peak_hour": True}
+            # --- BƯỚC 3: CHẠY DECISION ENGINE ---
+            st.markdown("### 🤖 AI Autonomous Decisions")
+            context = {
+                "sales_weight": 1.2, 
+                "max_impact": 100, 
+                "is_peak_hour": 8 <= datetime.now().hour <= 18
+            }
+            
+            # Gọi Engine phân tích
             decisions = AI_Decision_Logic.generate_decisions(df_ai_work, context)
             
-            # (Phần hiển thị Decision Cards...)
+            if not decisions:
+                st.success("✅ AI không phát hiện rủi ro Cluster nào.")
+            else:
+                for d in decisions:
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([2, 1, 1])
+                        with c1:
+                            st.markdown(f"**Action: {d['decision_type']}**")
+                            st.caption(f"Scope: {d['scope']}")
+                        with c2:
+                            st.metric("Priority", d['priority'])
+                        with c3:
+                            st.metric("Confidence", f"{int(d['confidence']*100)}%")
+                        
+                        with st.expander("Lý do hệ thống đưa ra quyết định"):
+                            for r in d['reason']:
+                                st.write(f"- {r}")
+                        
+                        # Nút bấm tương tác
+                        b1, b2 = st.columns(2)
+                        if b1.button("✅ Phê duyệt", key=f"btn_app_{d['scope']}"):
+                            st.toast(f"Đã phê duyệt hành động cho {d['scope']}")
+                        b2.button("❌ Bỏ qua", key=f"btn_ign_{d['scope']}")
 
         except Exception as e:
             st.error(f"❌ AI Engine bị nghẽn tại: {str(e)}")
-            # In ra danh sách cột thực tế để sếp dễ kiểm soát
-            st.write("Cột hiện có:", df_ai_work.columns.tolist())
+            st.info("Sếp check lại cột 'agent_version' trong bảng Database nhé!")
     else:
-        st.info("📡 Đang kết nối dữ liệu 6,000 máy...")
+        st.info("📡 Đang nạp dữ liệu từ 6,000 Agents...")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
