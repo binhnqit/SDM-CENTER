@@ -1220,46 +1220,42 @@ def render_ai_strategic_hub_v3(df_ai, now_dt, sb):
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH ---
 # --- PHẦN TRIỂN KHAI TRONG APP CHÍNH (BẢN FIX LỖI INDEX) ---
 with t_ai:
-    # 1. Kiểm tra df_inv (Bảng chứa 'customer_name' thực tế của sếp)
-    if 'df_inv' in locals() and not df_inv.empty:
+    # 1. Kiểm tra cả hai nguồn dữ liệu: df_inv (có Tên đại lý) và df_ai (có CPU/RAM)
+    if 'df_inv' in locals() and 'df_ai' in locals() and not df_inv.empty:
         try:
             now_dt_aware = datetime.now(timezone.utc)
             
-            # 2. LÀM SẠCH DỮ LIỆU GỐC (Tránh lỗi Key Error)
-            # Ép tên cột về chữ thường để tránh lỗi 'Customer_Name' vs 'customer_name'
-            df_work = df_inv.copy()
-            df_work.columns = [c.lower().strip() for c in df_work.columns]
+            # --- BƯỚC THẦN THÁNH: ĐẮP DỮ LIỆU ĐỊNH DANH ---
+            # Chúng ta lấy bảng vận hành (df_ai) làm gốc, rồi 'dán' tên đại lý từ df_inv vào
+            df_final = pd.merge(
+                df_ai[['machine_id', 'last_seen', 'is_online']], # Lấy dữ liệu sống
+                df_inv[['machine_id', 'hostname', 'customer_name']], # Lấy tên đại lý thật
+                on='machine_id', 
+                how='left'
+            )
+
+            # 2. CHUẨN HÓA CỘT (Force Lowercase)
+            df_final.columns = [c.lower().strip() for c in df_final.columns]
+
+            # 3. TÍNH PHÚT OFFLINE THẬT
+            if 'last_seen' in df_final.columns:
+                df_final['ls_dt'] = pd.to_datetime(df_final['last_seen'], utc=True, errors='coerce')
+                df_final['off_min'] = df_final['ls_dt'].apply(
+                    lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
+                )
             
-            # 3. SMART MAPPING (Ép dữ liệu vào đúng khuôn AI)
-            # Nếu sếp thấy bảng Database có 'hostname' và 'customer_name' thì đoạn này sẽ khớp ngay
-            if 'hostname' in df_work.columns and 'customer_name' in df_work.columns:
-                
-                # Tính toán phút rớt mạng thực tế
-                if 'last_seen' in df_work.columns:
-                    df_work['ls_dt'] = pd.to_datetime(df_work['last_seen'], utc=True, errors='coerce')
-                    df_work['off_min'] = df_work['ls_dt'].apply(
-                        lambda x: int((now_dt_aware - x).total_seconds() / 60) if pd.notnull(x) else 9999
-                    )
-                else:
-                    df_work['off_min'] = 0
+            # 4. LẤY DỮ LIỆU SẠCH CHO RENDER
+            # Điền giá trị mặc định nếu máy mới chưa kịp cập nhật tên
+            df_final['hostname'] = df_final['hostname'].fillna(df_final['machine_id'])
+            df_final['customer_name'] = df_final['customer_name'].fillna("Đại lý mới - Đang cập nhật")
 
-                # Đảm bảo các giá trị None được thay bằng chữ "Thực"
-                df_work['hostname'] = df_work['hostname'].fillna("Unknown-Host")
-                df_work['customer_name'] = df_work['customer_name'].fillna("Đại lý vãng lai")
-
-                # 4. RENDER VỚI DỮ LIỆU ĐÃ KHỚP
-                render_ai_strategic_hub_v3(df_work, now_dt_aware, sb)
-                
-            else:
-                # Thông báo thông minh nếu cấu trúc cột bị sai lệch
-                cols_present = df_work.columns.tolist()
-                st.warning(f"⚠️ Cấu trúc Database chưa khớp. Cần: 'hostname', 'customer_name'. Hiện có: {cols_present}")
-                st.info("Sếp hãy kiểm tra lại tiêu đề cột trong bảng Supabase hoặc file Excel Import.")
+            # CHÍNH THỨC RENDER CHIẾN LƯỢC
+            render_ai_strategic_hub_v3(df_final, now_dt_aware, sb)
 
         except Exception as e:
-            st.error(f"❌ Lỗi xử lý thực chiến: {str(e)}")
+            st.error(f"❌ Lỗi ghép nối định danh: {str(e)}")
     else:
-        st.info("📡 Đang đồng bộ hóa dữ liệu từ 6,000 Agents... Sếp đợi em xíu nhé!")
+        st.warning("📡 AI đang chờ sếp nạp bảng Inventory (Tổng kho) để lấy tên Đại lý!")
 with t_sys:
     st.markdown("# ⚙️ System Architecture & Governance")
     st.caption("Quản trị hạ tầng lõi, bảo mật phân cấp và giám sát AI Guard.")
